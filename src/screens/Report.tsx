@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import Gradient from 'ink-gradient';
 import { useStore } from '../state/store.js';
 import { ALL_MODELS } from '../data/fixtures.js';
-import { SCREEN_ACCENT, familyColor } from '../data/colors.js';
+import { SCREEN_ACCENT, familyColor, COST_BUCKETS, costGradient } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 
 export function Report() {
@@ -47,6 +47,27 @@ export function Report() {
       <Box justifyContent="center">
         <Gradient name="fruit"><Text bold>Cost per outcome heatmap</Text></Gradient>
       </Box>
+
+      {/* Color legend */}
+      <Box marginTop={1} flexDirection="column">
+        <Box>
+          <Text color="gray" dimColor>$/pass cell color: </Text>
+          {COST_BUCKETS.map((b, i) => (
+            <Box key={i}>
+              <Text color={b.color}>██ </Text>
+              <Text color="gray">{b.label}   </Text>
+            </Box>
+          ))}
+        </Box>
+        <Box>
+          <Text color="gray" dimColor>state: </Text>
+          <Text color="#22c55e">██ </Text><Text color="gray">passed (colored by $/pass)   </Text>
+          <Text color="#ef4444">▒▒ </Text><Text color="gray">failed   </Text>
+          <Text color="#f97316">▚▚ </Text><Text color="gray">infra-error   </Text>
+          <Text color="#3f3f46">·· </Text><Text color="gray">not run</Text>
+        </Box>
+      </Box>
+
       <Box marginTop={1}>
         <Box width={24}><Text> </Text></Box>
         {includedTasks.map((t) => (
@@ -100,14 +121,6 @@ export function Report() {
   );
 }
 
-function costGradient(cost: number) {
-  // green -> yellow -> red as $ climbs
-  if (cost < 0.02) return '#22c55e';
-  if (cost < 0.05) return '#84cc16';
-  if (cost < 0.10) return '#eab308';
-  if (cost < 0.20) return '#f97316';
-  return '#ef4444';
-}
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
 }

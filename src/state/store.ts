@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { TASKS, ALL_MODELS, Task, Model, Cell, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS } from '../data/fixtures.js';
 
-export type Screen = 'onboarding' | 'pickTasks' | 'pickModels' | 'confirm' | 'liveProgress' | 'report';
+export type Screen = 'onboarding' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'confirm' | 'liveProgress' | 'report';
 
 type State = {
   screen: Screen;
@@ -11,6 +11,7 @@ type State = {
   repeats: number;
   parallelism: number;
   maxSpend: number;
+  focusedTaskId: string | null;
   cells: Record<string, Record<string, Cell>>; // model -> task -> cell
   runStartedAt: number | null;
   runFinishedAt: number | null;
@@ -21,6 +22,8 @@ type State = {
   selectAllTasks: (v: boolean) => void;
   toggleModel: (slug: string) => void;
   setPreset: (slugs: string[]) => void;
+  setFocusedTask: (id: string | null) => void;
+  setMaxSpend: (v: number) => void;
   startRun: () => void;
   tick: () => void;
   reset: () => void;
@@ -34,6 +37,7 @@ export const useStore = create<State>((set, get) => ({
   repeats: 3,
   parallelism: 3,
   maxSpend: 10,
+  focusedTaskId: null,
   cells: {},
   runStartedAt: null,
   runFinishedAt: null,
@@ -51,6 +55,8 @@ export const useStore = create<State>((set, get) => ({
     return { selectedModels: next };
   }),
   setPreset: (slugs) => set({ selectedModels: new Set(slugs) }),
+  setFocusedTask: (id) => set({ focusedTaskId: id }),
+  setMaxSpend: (v) => set({ maxSpend: v }),
   startRun: () => {
     const s = get();
     const includedTasks = s.tasks.filter((t) => t.included);

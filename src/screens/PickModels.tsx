@@ -22,28 +22,37 @@ export function PickModels() {
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
 
-  const rows = useMemo(() => {
-    const q = query.toLowerCase();
-    const filter = (m: (typeof TOP_MODELS)[0]) => !q || m.slug.toLowerCase().includes(q) || m.displayName.toLowerCase().includes(q);
+  // Row assembly:
+  //   Query empty:   header "Most used" → top 20 → footer hint "15 more · press / to search"
+  //   Query active:  header "Search: <q>" → all matching from ALL_MODELS
+  type Row = { kind: 'header'; label: string } | { kind: 'model'; model: (typeof TOP_MODELS)[0] } | { kind: 'hint'; label: string };
+  const rows: Row[] = useMemo(() => {
+    const q = query.toLowerCase().trim();
+    if (!q) {
+      return [
+        { kind: 'header', label: 'Most used on OpenRouter (today)' },
+        ...TOP_MODELS.map((m) => ({ kind: 'model', model: m } as const)),
+        { kind: 'hint', label: `${OTHER_MODELS.length} more models · press / to search across all ${ALL_MODELS.length}` },
+      ];
+    }
+    const matching = ALL_MODELS.filter((m) => m.slug.toLowerCase().includes(q) || m.displayName.toLowerCase().includes(q));
     return [
-      { kind: 'header', label: 'Most used on OpenRouter (today)' } as const,
-      ...TOP_MODELS.filter(filter).map((m) => ({ kind: 'model' as const, model: m })),
-      { kind: 'header', label: 'All models (alphabetical)' } as const,
-      ...OTHER_MODELS.filter(filter).map((m) => ({ kind: 'model' as const, model: m })),
+      { kind: 'header', label: `Search results (${matching.length} of ${ALL_MODELS.length})` },
+      ...matching.map((m) => ({ kind: 'model', model: m } as const)),
     ];
   }, [query]);
 
-  const modelRows = rows.filter((r) => r.kind === 'model') as { kind: 'model'; model: (typeof TOP_MODELS)[0] }[];
+  const modelRows = rows.filter((r) => r.kind === 'model') as Extract<Row, { kind: 'model' }>[];
 
   useInput((input, key) => {
     if (searching) {
       if (key.return || key.escape) { setSearching(false); return; }
-      if (key.backspace || key.delete) { setQuery((q) => q.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setQuery((q) => q + input);
+      if (key.backspace || key.delete) { setQuery((q) => q.slice(0, -1)); setCursor(0); return; }
+      if (input && !key.ctrl && !key.meta) { setQuery((q) => q + input); setCursor(0); }
       return;
     }
     if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
-    else if (key.downArrow) setCursor((c) => Math.min(modelRows.length - 1, c + 1));
+    else if (key.downArrow) setCursor((c) => Math.min(Math.max(0, modelRows.length - 1), c + 1));
     else if (input === ' ' && modelRows[cursor]) toggleModel(modelRows[cursor].model.slug);
     else if (input === '/') setSearching(true);
     else if (input === '1' || input === '2' || input === '3') {
@@ -67,6 +76,8 @@ export function PickModels() {
     return total;
   }, [selectedModels, includedTasks.length, repeats]);
 
+  const showTable = modelRows.length > 0;
+
   return (
     <Frame
       title="my-agent-repo · Pick models"
@@ -77,17 +88,41 @@ export function PickModels() {
           <Text color="gray">
             <Text color="cyan">↑↓</Text> nav · <Text color="cyan">space</Text> toggle · <Text color="cyan">/</Text> search · <Text color="cyan">1</Text> cheap · <Text color="cyan">2</Text> frontier · <Text color="cyan">3</Text> free · <Text color="cyan">enter</Text> next → · <Text color="cyan">b</Text> back
           </Text>
-          {searching && <Text color="cyan">Search: <Text color="white" bold>{query}</Text><Text color="gray">▏</Text></Text>}
+          {searching && <Text color="cyan">Search: <Text color="white" bold>{query}</Text><Text color="gray">▏</Text><Text color="gray"> · enter/esc close</Text></Text>}
         </Box>
       }
     >
+      {/* Column headers */}
+      {showTable && (
+        <>
+          <Box>
+            <Box width={4}><Text color="magenta" bold>   </Text></Box>
+            <Box width={4}><Text color="magenta" bold>#</Text></Box>
+            <Box width={22}><Text color="magenta" bold>Model</Text></Box>
+            <Box width={10}><Text color="magenta" bold>Δ 24h</Text></Box>
+            <Box width={12}><Text color="magenta" bold>Tokens/day</Text></Box>
+            <Box width={16}><Text color="magenta" bold>$/M in · out</Text></Box>
+            <Box width={9}><Text color="magenta" bold>Ctx</Text></Box>
+            <Text color="magenta" bold>Free</Text>
+          </Box>
+          <Box><Text color="gray" dimColor>{'─'.repeat(90)}</Text></Box>
+        </>
+      )}
+
       {(() => {
         let modelIdx = -1;
         return rows.map((row, i) => {
           if (row.kind === 'header') {
             return (
               <Box key={`h${i}`} marginTop={i === 0 ? 0 : 1}>
-                <Text color="magenta" bold>{row.label}</Text>
+                <Text color="cyan" bold>▸ {row.label}</Text>
+              </Box>
+            );
+          }
+          if (row.kind === 'hint') {
+            return (
+              <Box key={`hint${i}`} marginTop={1}>
+                <Text color="gray" dimColor>… {row.label}</Text>
               </Box>
             );
           }
@@ -96,18 +131,20 @@ export function PickModels() {
           const m = row.model;
           const check = selectedModels.has(m.slug) ? '●' : '○';
           const rankStr = m.rankPosition ? String(m.rankPosition).padStart(2, ' ') : '  ';
-          const tokensStr = m.totalTokens ? formatTokens(m.totalTokens).padStart(9) : '         ';
+          const tokensStr = m.totalTokens ? formatTokens(m.totalTokens).padStart(9) : '        —';
           return (
-            <Box key={m.slug} paddingLeft={active ? 0 : 2}>
-              {active && <Text color="cyan" bold>▸ </Text>}
-              <Text color={selectedModels.has(m.slug) ? '#22c55e' : 'gray'}>{check} </Text>
+            <Box key={m.slug}>
+              <Box width={4}>
+                {active ? <Text color="cyan" bold>▸ </Text> : <Text>  </Text>}
+                <Text color={selectedModels.has(m.slug) ? '#22c55e' : '#64748b'}>{check}</Text>
+              </Box>
               <Box width={4}><Text color="gray">{rankStr}</Text></Box>
               <Box width={22}><Text color={familyColor(m.family)} bold>{truncate(m.displayName, 20)}</Text></Box>
-              <Box width={10}><Text color={changeColor(m.changePct)}>{m.rankPosition ? `${m.changePct > 0 ? '↑' : m.changePct < 0 ? '↓' : ' '}${Math.abs(m.changePct)}%` : ''}</Text></Box>
+              <Box width={10}><Text color={changeColor(m.changePct)}>{m.rankPosition ? `${m.changePct > 0 ? '↑' : m.changePct < 0 ? '↓' : ' '}${Math.abs(m.changePct)}%` : ' '}</Text></Box>
               <Box width={12}><Text color="gray">{tokensStr}</Text></Box>
-              <Text color="gray">${m.inputPrice.toFixed(2).padStart(5)}/${m.outputPrice.toFixed(2).padStart(5)} · </Text>
-              <Text color="gray">{(m.context / 1000).toFixed(0)}k ctx</Text>
-              {m.isFree && <Text color="#22c55e"> free</Text>}
+              <Box width={16}><Text color="gray">${m.inputPrice.toFixed(2).padStart(5)} · ${m.outputPrice.toFixed(2).padStart(5)}</Text></Box>
+              <Box width={9}><Text color="gray">{(m.context / 1000).toFixed(0)}k</Text></Box>
+              {m.isFree ? <Text color="#22c55e" bold>free</Text> : <Text color="gray"> </Text>}
             </Box>
           );
         });

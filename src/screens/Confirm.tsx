@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useStore } from '../state/store.js';
 import { ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS } from '../data/fixtures.js';
@@ -11,13 +11,29 @@ export function Confirm() {
   const repeats = useStore((s) => s.repeats);
   const parallelism = useStore((s) => s.parallelism);
   const maxSpend = useStore((s) => s.maxSpend);
+  const setMaxSpend = useStore((s) => s.setMaxSpend);
   const goTo = useStore((s) => s.goTo);
   const startRun = useStore((s) => s.startRun);
+  const [editingCap, setEditingCap] = useState(false);
+  const [capDraft, setCapDraft] = useState(maxSpend.toFixed(2));
 
   useInput((input, key) => {
+    if (editingCap) {
+      if (key.return) {
+        const v = parseFloat(capDraft);
+        if (!isNaN(v) && v > 0) setMaxSpend(v);
+        setEditingCap(false);
+        return;
+      }
+      if (key.escape) { setEditingCap(false); setCapDraft(maxSpend.toFixed(2)); return; }
+      if (key.backspace || key.delete) { setCapDraft((d) => d.slice(0, -1)); return; }
+      if (input && /^[\d.]$/.test(input)) setCapDraft((d) => d + input);
+      return;
+    }
     if (key.return) startRun();
     else if (input === 't') goTo('pickTasks');
     else if (input === 'm') goTo('pickModels');
+    else if (input === 'c') { setCapDraft(maxSpend.toFixed(2)); setEditingCap(true); }
     else if (input === 'q' || key.escape) process.exit(0);
   });
 
@@ -25,7 +41,7 @@ export function Confirm() {
   const modelObjs = Array.from(selectedModels).map((s) => ALL_MODELS.find((m) => m.slug === s)!).filter(Boolean);
   const totalRuns = includedTasks.length * modelObjs.length * repeats;
   const seqSec = totalRuns * P50_RUN_SECONDS;
-  const parSec = Math.max(P50_RUN_SECONDS, seqSec / Math.min(parallelism, modelObjs.length));
+  const parSec = Math.max(P50_RUN_SECONDS, seqSec / Math.min(parallelism, modelObjs.length || 1));
 
   let destCost = 0;
   for (const m of modelObjs) {
@@ -40,9 +56,17 @@ export function Confirm() {
       title="my-agent-repo · Confirm & run"
       accent={SCREEN_ACCENT.confirm}
       footer={
-        <Text color="gray">
-          <Text color="#22c55e" bold>enter</Text> RUN · <Text color="cyan">t</Text> change tasks · <Text color="cyan">m</Text> change models · <Text color="cyan">q</Text> quit
-        </Text>
+        editingCap ? (
+          <Text color="cyan">
+            New cap ($): <Text color="white" bold>{capDraft}</Text><Text color="gray">▏</Text><Text color="gray"> · enter save · esc cancel</Text>
+          </Text>
+        ) : (
+          <Text color="gray">
+            <Text color={overCap ? 'gray' : '#22c55e'} bold={!overCap}>{overCap ? 'enter' : 'enter'}</Text>
+            {overCap ? <Text color="gray"> (blocked, over cap)</Text> : <Text color="#22c55e" bold> RUN</Text>}
+            <Text color="gray"> · </Text><Text color="cyan">c</Text> change cap · <Text color="cyan">t</Text> change tasks · <Text color="cyan">m</Text> change models · <Text color="cyan">q</Text> quit
+          </Text>
+        )
       }
     >
       <Section title="Scope">
@@ -66,8 +90,15 @@ export function Confirm() {
         <KV label={`Judge model ($${JUDGE_COST_PER_TASK.toFixed(3)} × ${totalRuns} tasks judged)`} value={`~ $${judgeCost.toFixed(2)}`} />
         <Box marginTop={0}><Text color="gray">  ─────────────────────────────────────────────────────</Text></Box>
         <KV label="Total estimated" value={`~ $${totalCost.toFixed(2)}`} highlight color={overCap ? '#ef4444' : '#22c55e'} />
-        <Box marginTop={1}>
-          <Text color={overCap ? '#ef4444' : 'gray'}>Guardrail: hard cap at <Text bold>${maxSpend.toFixed(2)}</Text> (--max-spend override){overCap ? ' · OVER CAP · adjust selection or raise cap' : ''}</Text>
+        <Box marginTop={1} flexDirection="column">
+          <Text color="gray">
+            Guardrail: hard cap at <Text bold color={overCap ? '#ef4444' : 'white'}>${maxSpend.toFixed(2)}</Text> <Text color="gray" dimColor>(--max-spend override)</Text>
+          </Text>
+          {overCap && (
+            <Text color="#ef4444" bold>
+              ⚠ OVER CAP by ${(totalCost - maxSpend).toFixed(2)} · press <Text color="cyan">c</Text> to raise cap, or <Text color="cyan">t</Text>/<Text color="cyan">m</Text> to trim selection
+            </Text>
+          )}
         </Box>
       </Section>
     </Frame>

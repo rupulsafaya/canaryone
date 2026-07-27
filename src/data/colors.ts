@@ -40,3 +40,13 @@ export const SCREEN_ACCENT = {
 };
 
 export const changeColor = (pct: number) => (pct > 0 ? '#22c55e' : pct < 0 ? '#ef4444' : '#94a3b8');
+
+// Cost gradient buckets — used both in Report cells and in the legend
+export const COST_BUCKETS: { max: number; color: string; label: string }[] = [
+  { max: 0.02, color: '#22c55e', label: '≤ $0.02' },
+  { max: 0.05, color: '#84cc16', label: '≤ $0.05' },
+  { max: 0.10, color: '#eab308', label: '≤ $0.10' },
+  { max: 0.20, color: '#f97316', label: '≤ $0.20' },
+  { max: Infinity, color: '#ef4444', label: '> $0.20' },
+];
+export const costGradient = (cost: number) => COST_BUCKETS.find((b) => cost < b.max)!.color;
