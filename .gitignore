@@ -5,3 +5,4 @@ dist
 .c1/
 *.log
 .DS_Store
+.next/

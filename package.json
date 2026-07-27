@@ -1,0 +1,38 @@
+{
+  "name": "canaryone",
+  "version": "0.0.0",
+  "description": "Local agent-testing CLI (placeholder — 0.1.0 will ship the real CLI). Point at your agent codebase, benchmark N models on YOUR tasks. Nothing leaves the machine.",
+  "keywords": [
+    "cli",
+    "ai",
+    "agent",
+    "benchmark",
+    "openrouter",
+    "llm",
+    "testing",
+    "cost",
+    "evaluation"
+  ],
+  "homepage": "https://github.com/rupulsafaya/canaryone#readme",
+  "bugs": {
+    "url": "https://github.com/rupulsafaya/canaryone/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rupulsafaya/canaryone.git"
+  },
+  "license": "MIT",
+  "author": "Rupul Safaya",
+  "main": "index.js",
+  "files": [
+    "README.md",
+    "index.js"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

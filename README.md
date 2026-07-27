@@ -8,7 +8,9 @@ Local agent-testing CLI. Point at your agent codebase, benchmark against N model
 
 ## Status
 
-Design phase. See [c1-local-SPEC-2707-v0.md](./c1-local-SPEC-2707-v0.md) for the v0 build spec.
+**Design phase.** No code shipped yet — the `0.0.0` published to npm is a name reservation only. The first working release will be `0.1.0`.
+
+See [c1-local-SPEC-2707-v0.md](./c1-local-SPEC-2707-v0.md) for the v0 build spec.
 
 ## Positioning
 
