@@ -52,7 +52,12 @@ export function TaskDetail() {
       <Row label="Name"><Text color="white">{task.name}</Text></Row>
       <Row label="File"><Text color="cyan">{task.file}</Text></Row>
       <Row label="Verify"><Text color="magenta">{task.verifyCmd}</Text></Row>
-      <Row label="Judge confidence"><Text color={confColor}>{task.confidence.toFixed(2)}</Text> <Text color="gray" dimColor>({task.confidence >= 0.85 ? 'high' : task.confidence >= 0.75 ? 'medium' : 'low'})</Text></Row>
+      <Row label="Judge confidence">
+        <Text color={confColor}>
+          {task.confidence.toFixed(2)}
+          <Text color="gray" dimColor>{'  '}({task.confidence >= 0.85 ? 'high' : task.confidence >= 0.75 ? 'medium' : 'low'})</Text>
+        </Text>
+      </Row>
       <Box marginTop={1} flexDirection="column">
         <Text color="magenta" bold>Summary</Text>
         <Box paddingLeft={2} paddingTop={0}><Text color="gray">{task.summary}</Text></Box>
