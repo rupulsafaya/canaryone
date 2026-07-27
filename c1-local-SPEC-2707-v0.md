@@ -4,9 +4,11 @@
 **Version:** v0 (local TUI + reverse-proxy capture + task-replay comparison)
 **Author:** Rupul Safaya + Claude (interview-driven, session `c1-sdk-design`)
 **Design context:**
-- [canaryone-intro.md](./canaryone-intro.md) — hosted-product framing (stays as showcase)
-- [canaryone-SPEC-2507-v0.md](./canaryone-SPEC-2507-v0.md) — hosted-product build spec (parent; components carry over)
+- [canaryone-cloud/canaryone-intro.md](https://github.com/rupulsafaya/canaryone-cloud/blob/main/canaryone-intro.md) — hosted-product framing (stays as showcase)
+- [canaryone-cloud/canaryone-SPEC-2507-v0.md](https://github.com/rupulsafaya/canaryone-cloud/blob/main/canaryone-SPEC-2507-v0.md) — hosted-product build spec (parent; components carry over)
 - Handwritten notes: `~/Downloads/IMG_5797.jpg` (session `c1-sdk-design`)
+
+**Companion repo:** [rupulsafaya/canaryone-cloud](https://github.com/rupulsafaya/canaryone-cloud) — the hosted OR-Broadcast dashboard, live at [canaryone-theta.vercel.app](https://canaryone-theta.vercel.app). Feature-frozen as showcase per §16.
 
 ---
 
