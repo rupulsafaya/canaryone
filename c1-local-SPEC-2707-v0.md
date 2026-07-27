@@ -35,32 +35,223 @@ The two products share their conceptual core (session/task/step schema, judge, c
 
 ## §3 — User journey
 
+**One command, whether it's the first run or the hundredth:**
+
 ```
 $ cd my-agent-repo
-$ npx c1 init                        # writes .c1/config.json, .c1/db.sqlite, appends to .gitignore
-$ npx c1                             # opens the TUI
-
-  ┌─────────────────────────────────────────────────────┐
-  │ CanaryOne Local · my-agent-repo                     │
-  ├─────────────────────────────────────────────────────┤
-  │ ▸ Scan repo                    (auto)               │
-  │ ▸ Pick tasks                   (18 detected, 0 pick)│
-  │ ▸ Pick models                  (0 selected)         │
-  │ ▸ Confirm & run                                     │
-  └─────────────────────────────────────────────────────┘
+$ npx canaryone
 ```
 
-1. **`npx c1 init`** in the target repo. Writes `.c1/` (gitignored by default), fetches OR catalog on first run, prompts for `OR_KEY` (destination) + `OR_JUDGE_KEY` (judge) into `.c1/.env` (also gitignored).
-2. **Scan.** Deterministic pass (package.json / pyproject / Makefile) + LLM-classified pass (using the judge key) to detect:
+(Or, once: `npm i -g canaryone` — then `c1` from anywhere. Both invocations resolve to the same `bin`.)
+
+**First-run onboarding** (auto-detected: `.c1/` does not exist). Everything inline in the TUI, no separate `init` subcommand:
+
+```
+  ┌───────────────────────────────────────────────────────────┐
+  │ canaryone · my-agent-repo · first-run setup               │
+  ├───────────────────────────────────────────────────────────┤
+  │ OpenRouter API key                                        │
+  │   ✓ Using $OPENROUTER_API_KEY from environment            │
+  │     (or, if unset: masked TUI prompt → written to .c1/.env│
+  │      which is added to .gitignore)                        │
+  │                                                           │
+  │ Scanning repo …                                           │
+  │   ✓ Detected runner: pnpm test                            │
+  │   ✓ 18 agent-relevant tests (of 47 total)                 │
+  │   ✓ Fetched OR catalog (503 models, $12.40 credits left)  │
+  │                                                           │
+  │ Ready. Press Enter.                                       │
+  └───────────────────────────────────────────────────────────┘
+```
+
+**Then the main TUI opens straight into task/model selection:**
+
+```
+  ┌───────────────────────────────────────────────────────────┐
+  │ canaryone · my-agent-repo                                 │
+  ├───────────────────────────────────────────────────────────┤
+  │ ▸ Pick tasks           (18 detected, 0 picked)            │
+  │ ▸ Pick models          (0 selected)                       │
+  │ ▸ Confirm & run                                           │
+  └───────────────────────────────────────────────────────────┘
+```
+
+**What happens on first run:**
+
+1. **Get OR API key.** Read `$OPENROUTER_API_KEY` (OR's own convention) or `$OR_KEY`. If neither is set, TUI shows a masked-input prompt; the entered key is written to `.c1/.env` and `.c1/.env` is added to the repo's `.gitignore`. **One key covers destination + judge by default**; users who want cost-accounting separation can set `OR_JUDGE_KEY` in `.c1/.env` after the fact (documented in §11).
+2. **Automatic scan.** Deterministic pass (package.json / pyproject / Makefile) + LLM-classified pass (using the OR key against Haiku) to detect:
    - How to run the agent headlessly (`npm run dev`, `python agent.py`, custom entrypoint)
    - How to run the test suite (`pnpm test`, `pytest`, `nx test`)
    - Which existing tests exercise the agent (LLM classifies each test file: "agent regression" vs "non-agent unit test — e.g. Stripe pre-auth check")
-3. **Pick tasks.** TUI shows the list of detected agent tests. User checks the ones to include. If the list is empty or too thin, wizard offers three fallbacks (§7): (a) delete-and-recover, (b) use test names as prompts, (c) hand-authored task via step-by-step wizard.
-4. **Pick models.** TUI shows OR catalog fetched live. Curated presets on top ("Cheap coding fleet", "Frontier comparison", "GLM-5.2 host bake-off"). Freeform add below. Pre-flight cost estimate updates as models are added.
-5. **Confirm & run.** Pre-flight banner: `Estimated spend: $4.30 · Cap: $10.00 · Continue? (y/N)`. User confirms.
-6. **Live progress.** Ink TUI shows one row per model, progress bars per task, live $ spent, live pass counts. Ctrl-C is a soft-stop (finishes in-flight tasks, writes partial report).
-7. **Report.** Money-shot heatmap in the TUI + full report written to `.c1/reports/<timestamp>/` (index.html, summary.md, raw.jsonl). TUI shows path.
 
+   Results cached to `.c1/scan.json`. Re-scan on `--rescan` or automatically if `package.json` mtime is newer than the cache.
+
+3. **Fetch OR catalog** (`GET /api/v1/models` + `GET /api/v1/key` for credit balance). Cached 24h in `.c1/model-catalog.json`.
+
+4. **Write `.c1/config.json`** with the resolved runner + entrypoint + scan results.
+
+Steps 1–4 run in one Ink render pass. From the user's perspective it's **one command → one setup screen → main TUI.**
+
+**Subsequent runs** skip the onboarding; TUI opens directly to task/model selection using cached scan + config.
+
+**Main-TUI flow** (each step gets its own subsection below):
+
+### §3.5 — Pick tasks
+
+TUI presents the list of **already-classified agent-relevant tests** produced by the first-run scan (§3 step 2). Non-agent tests (Stripe pre-auth checks, DB migration integrity, plain unit tests) never appear — the LLM classifier drops them at scan time.
+
+Each row shows:
+- Test file path + `it()`/`describe()` name
+- Classifier confidence (`0.72`)
+- One-line summary of what the test exercises (from the same LLM pass)
+
+User navigates the list with arrow keys and toggles inclusion with space. `a` = select all; `n` = select none.
+
+**Selection is persistent.** The set of included task IDs is written to `tasks_meta.included_at` in `.c1/db.sqlite` on any change. On the next `npx canaryone` invocation, the picker opens with the previous selection pre-checked. **The user never re-scans, re-classifies, or re-selects unless they want to** — the flow for a returning user is one command → confirm & run.
+
+Explicit rescans available via `--rescan` flag (invalidates scan cache, re-runs classification). Automatic rescan triggers on `package.json` mtime > cache mtime.
+
+**v0 assumption:** at least one agent-relevant test exists in the target repo. If the classifier finds zero: C1 emits a single actionable error (`"No agent-relevant tests detected. C1 v0 requires at least one — see docs. Task authoring in the TUI is coming in v0.1."`) and exits non-zero. **Fallbacks (delete-and-recover, test-name-as-prompt, TUI wizard) are deferred to v0.1** and covered as future work in §7.
+
+### §3.6 — Pick models
+
+Two data sources fetched during first-run onboarding (§3 step 3), refreshed on `--refresh-catalog` or every 24h:
+
+1. **`GET https://openrouter.ai/api/v1/models`** — full catalog: model slug, per-token pricing (input/output/cached), context window, provider info. Documented public API.
+2. **`GET https://openrouter.ai/api/frontend/v1/rankings/models?view=day&models=all`** — usage rank across all OR traffic. Returns `{ data: [{model_permaslug, variant, total_prompt_tokens, total_completion_tokens, count, change, ...}] }`. Sort by `count` desc = "most popular today". *Undocumented `frontend/v1` endpoint — small risk of URL change; C1 falls back to unranked-alphabetical if the endpoint 404s.*
+
+The picker joins these two: rank order + pricing + context on each row.
+
+**Layout:**
+
+```
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │ canaryone · my-agent-repo · Pick models                               │
+  ├───────────────────────────────────────────────────────────────────────┤
+  │ Most used on OpenRouter (today)                                       │
+  │  [x] xiaomi/mimo-v2.5              1.52T tok  ↑5%  $0.15/$0.60/1M     │
+  │  [x] deepseek/deepseek-v4-flash    1.03T tok  ↑9%  $0.20/$0.80/1M     │
+  │  [ ] tencent/hy3                   597B tok   ↑1%  $0.30/$1.20/1M     │
+  │  [ ] deepseek/deepseek-v4-pro      493B tok   ↑19% $0.40/$1.60/1M     │
+  │  ... top 20                                                           │
+  │                                                                       │
+  │ All models (alphabetical, /search)                                    │
+  │  [ ] 01-ai/yi-large                                    $0.30/$0.90/1M │
+  │  [ ] ai21/jamba-large-1.7                              $0.50/$0.70/1M │
+  │  [ ] amazon/nova-micro-v1                              $0.04/$0.14/1M │
+  │  ... searchable via /                                                 │
+  ├───────────────────────────────────────────────────────────────────────┤
+  │ 2 selected · Est. 8 tasks × 2 models × 3 repeats = 48 runs ≈ $3.20    │
+  └───────────────────────────────────────────────────────────────────────┘
+```
+
+Selection is persisted to `.c1/db.sqlite:selected_models` per repo. Returning users see their last selection pre-checked.
+
+**Pre-flight cost estimate** (bottom bar): live counter that recomputes on every add/remove. Formula:
+
+```
+est_cost = Σ (over selected models × selected tasks × repeats)
+             (baseline_input_tokens × input_price + baseline_output_tokens × output_price)
+           + judge_cost_per_task × N_tasks × N_models × N_repeats
+```
+
+`baseline_input_tokens` / `baseline_output_tokens` are per-task averages seeded from iter2 fixture data. After the first real run in this repo, C1 replaces the baseline with observed averages per task — subsequent estimates get more accurate.
+
+**Deferred to v0.1: Pick provider stage.** OR is the only destination in v0, so provider = OR is implicit. When direct-API destinations (Nebius, Baseten, Anthropic-direct) land in v0.1, a "Pick provider" step slots in between "Pick models" and "Confirm & run" — for each selected model that has multiple viable destinations, the user chooses which. See §14 for the destination abstraction.
+
+### §3.7 — Confirm & run
+
+Before running, the TUI shows the **full breakdown** — not just a total. Users need to see the math before committing spend.
+
+```
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │ canaryone · my-agent-repo · Confirm & run                             │
+  ├───────────────────────────────────────────────────────────────────────┤
+  │ Scope                                                                 │
+  │   8 tasks × 3 models × 1 provider (OR) × 3 repeats = 72 runs          │
+  │                                                                       │
+  │ Time                                                                  │
+  │   ~ 90 s median per run × 72 = ~1h 48m sequential                     │
+  │   With parallelism = 3: ~ 36 min wall-clock                           │
+  │                                                                       │
+  │ Cost                                                                  │
+  │   Destination LLM  (OR list × baseline tokens):     ~ $3.80           │
+  │   Judge model      ($0.005 × 72 tasks judged):      ~ $0.36           │
+  │   ────────────────────────────────────────────────────────────        │
+  │   Total estimated:                                  ~ $4.16           │
+  │                                                                       │
+  │ Guardrail: hard cap at $10.00 (--max-spend override)                  │
+  │                                                                       │
+  │ [ Run ]    [ Change task selection ]    [ Change models ]    [ Quit ] │
+  └───────────────────────────────────────────────────────────────────────┘
+```
+
+Numbers are all estimates. Time uses `p50_run_duration_ms` from prior runs on this repo (fallback: iter2 baseline). Cost uses the same formula as §3.6 with a judge-cost line added.
+
+### §3.8 — Live progress
+
+**Grayscale-filling table**, one row per model, one column per task. Cells start empty and fill in as work completes. This becomes the money-shot heatmap by the end — the live view IS the report, being drawn in real time.
+
+```
+  ┌──────────────────────────────────────────────────────────────────────────────────┐
+  │ canaryone · my-agent-repo · Running  ·  9/24 done  ·  $1.42 spent  · ~22m left   │
+  ├──────────────────────────────────────────────────────────────────────────────────┤
+  │                    t1  t2  t3  t4  t5  t6  t7  t8   pass  spend    ETA           │
+  │  haiku-4.5         ██  ██  ██  ▓▓  ··  ··  ··  ··   3/3   $0.42    ~6m           │
+  │  sonnet-4.6        ██  ██  ▒▒  ▓▓  ··  ··  ··  ··   2/3   $0.71    ~8m           │
+  │  deepseek-v4-flash ██  ██  ██  ██  ▓▓  ··  ··  ··   4/4   $0.29    ~7m           │
+  │                                                                                  │
+  │  Legend:  ··  queued   ▓▓  running   ██  passed   ▒▒  failed   ▚▚  error         │
+  │                                                                                  │
+  │  Current: haiku-4.5 on t4  ·  step 7/12  ·  $0.03 self-reported                  │
+  │  Press [q] to soft-stop (finish in-flight, write partial report)                 │
+  └──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Cell semantics:**
+- `··` (two dots) — queued, work not started
+- `▓▓` (dark shade) — currently running; animated spinner via alternating shades
+- `██` (full block, green in a color-capable terminal) — task passed
+- `▒▒` (medium shade, red in color) — task failed
+- `▚▚` (diagonal) — infra error (rate-limit exhausted, timeout, cost cap); not a real model failure
+
+**Right-side columns:**
+- `pass` — passed / total-attempted so far for this model
+- `spend` — cumulative $ for this model
+- `ETA` — remaining wall time for this model given current pace
+
+**Header line:** overall progress + cumulative spend + wall-clock ETA. Updates every second.
+
+**Ctrl-C / `q`:** soft-stop — no new work spawned, in-flight runs allowed to finish, partial report written to `.c1/reports/<timestamp>/`. Second Ctrl-C = hard-kill (SIGKILL all workers, DB left in `status=aborted`, resumable via `c1 resume <run_id>` if implemented).
+
+The final frame of this view IS the money-shot heatmap (§13). The report just captures it to `heatmap.png` and writes accompanying HTML/MD/JSONL.
+
+### §3.9 — Report
+
+Money-shot heatmap frozen in the TUI + full report written to `.c1/reports/<timestamp>/`:
+
+- `index.html` — self-contained, offline-openable, includes heatmap + KPI cards + per-session drilldowns
+- `summary.md` — same numbers as markdown tables (diff-friendly, PR-attachable, LLM-friendly)
+- `raw.jsonl` — every step's request/response/timing/cost + judge output (power-user grep)
+- `heatmap.png` — the money shot alone, standalone image (Slack/PR-friendly)
+
+TUI displays the report path and offers `[ Open in browser ]` (opens `index.html`), `[ Copy path ]`, `[ Run again ]` (returns to task/model selection with previous selection intact).
+
+**What lives in `.c1/` (all gitignored by default):**
+
+```
+.c1/
+├── .env                    # OPENROUTER_API_KEY (masked input result); optional OR_JUDGE_KEY
+├── config.json             # runner, entrypoint, scan hash
+├── db.sqlite               # runs, sessions, steps, tasks, classifier_tags
+├── model-catalog.json      # cached OR /models response
+├── scan.json               # cached repo scan results
+├── deps-cache/             # node_modules for worktree symlinks (installed once)
+├── worktrees/              # git worktrees per (model, task, repeat); auto-cleaned
+├── reports/<timestamp>/    # index.html, summary.md, raw.jsonl, heatmap.png
+└── tasks.json              # user-authored + accepted-from-scan task defs
+```
+>>>
 ---
 
 ## §4 — Architecture
