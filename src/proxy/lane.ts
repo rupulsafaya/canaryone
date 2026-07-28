@@ -16,7 +16,7 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import type { TrafficLog } from '../runner/traffic-log.js';
 import type { Db, StepRow } from '../db/sqlite.js';
-import type { OrEndpoint } from '../data/schema.js';
+import type { OrEndpoint, CatalogModel } from '../data/schema.js';
 
 export interface LaneConfig {
   runId: string;
@@ -25,7 +25,8 @@ export interface LaneConfig {
   destinationSlug: string;              // e.g. "openrouter:baseten/fp8"
   router: string;                       // e.g. "openrouter"
   providerTag: string | null;           // e.g. "baseten/fp8" (may be null for router-only routing)
-  endpoint: OrEndpoint | null;          // for cost computation
+  endpoint: OrEndpoint | null;          // preferred pricing source (per-provider)
+  fallbackModelPrice: { input: number; output: number } | null;  // model-level $/M from OR catalog; used when endpoint is null
   orKey: string;
 }
 
@@ -33,6 +34,8 @@ export interface LaneServer {
   port: number;
   stepCount: number;
   costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
   close(): Promise<void>;
 }
 
@@ -41,9 +44,15 @@ const OR_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export async function startLane(cfg: LaneConfig, log: TrafficLog, db: Db): Promise<LaneServer> {
   let stepIx = 0;
   let costUsd = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
 
   const server = http.createServer((req, res) => {
-    void handleRequest(req, res, cfg, log, db, () => stepIx++, (cost) => { costUsd += cost; });
+    void handleRequest(req, res, cfg, log, db, () => stepIx++, (cost, inTok, outTok) => {
+      costUsd += cost;
+      inputTokens += inTok;
+      outputTokens += outTok;
+    });
   });
 
   const port = await new Promise<number>((resolve, reject) => {
@@ -59,6 +68,8 @@ export async function startLane(cfg: LaneConfig, log: TrafficLog, db: Db): Promi
     port,
     get stepCount() { return stepIx; },
     get costUsd() { return costUsd; },
+    get inputTokens() { return inputTokens; },
+    get outputTokens() { return outputTokens; },
     close() {
       return new Promise((resolve) => server.close(() => resolve()));
     },
@@ -72,7 +83,7 @@ async function handleRequest(
   log: TrafficLog,
   db: Db,
   nextStepIx: () => number,
-  addCost: (v: number) => void,
+  addCost: (cost: number, inputTokens: number, outputTokens: number) => void,
 ): Promise<void> {
   const url = req.url ?? '/';
 
@@ -118,7 +129,7 @@ async function handleChatCompletions(
   log: TrafficLog,
   db: Db,
   stepIx: number,
-  addCost: (v: number) => void,
+  addCost: (cost: number, inputTokens: number, outputTokens: number) => void,
 ): Promise<void> {
   const stepId = randomUUID();
   const startedAt = new Date().toISOString();
@@ -217,8 +228,8 @@ async function handleChatCompletions(
   const usage = orBody?.usage ?? null;
   const inputTokens = Number(usage?.prompt_tokens ?? 0) || 0;
   const outputTokens = Number(usage?.completion_tokens ?? 0) || 0;
-  const cost = computeCost(inputTokens, outputTokens, cfg.endpoint);
-  addCost(cost);
+  const cost = computeCost(inputTokens, outputTokens, cfg.endpoint, cfg.fallbackModelPrice);
+  addCost(cost, inputTokens, outputTokens);
 
   const latency = Date.now() - t0;
   const respRecord = await log.append({
@@ -271,11 +282,18 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-function computeCost(input: number, output: number, endpoint: OrEndpoint | null): number {
-  if (!endpoint) return 0;
-  const inCost = (input / 1_000_000) * endpoint.inputPrice;
-  const outCost = (output / 1_000_000) * endpoint.outputPrice;
-  return inCost + outCost;
+function computeCost(
+  input: number,
+  output: number,
+  endpoint: OrEndpoint | null,
+  fallback: { input: number; output: number } | null,
+): number {
+  // Per-provider endpoint pricing is preferred (accurate for the specific
+  // (router, provider) combo). Falls back to model-level $/M from the OR
+  // catalog rankings when the endpoint lookup missed.
+  const inPrice = endpoint?.inputPrice ?? fallback?.input ?? 0;
+  const outPrice = endpoint?.outputPrice ?? fallback?.output ?? 0;
+  return (input / 1_000_000) * inPrice + (output / 1_000_000) * outPrice;
 }
 
 function classifyOrFailure(status: number): string {

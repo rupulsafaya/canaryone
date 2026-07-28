@@ -28,6 +28,7 @@ export interface LaneSpec {
   router: string;
   providerTag: string | null;
   endpoint: OrEndpoint | null;
+  fallbackModelPrice: { input: number; output: number } | null;
 }
 
 export interface TaskSpec {
@@ -208,7 +209,9 @@ export class RunEngine {
           runId: spec.runId, sessionId: s.sessionId,
           modelSlug: s.lane.modelSlug, destinationSlug: s.lane.destinationSlug,
           router: s.lane.router, providerTag: s.lane.providerTag,
-          endpoint: s.lane.endpoint, orKey: spec.orKey,
+          endpoint: s.lane.endpoint,
+          fallbackModelPrice: s.lane.fallbackModelPrice,
+          orKey: spec.orKey,
         },
         log, db,
       );
@@ -262,6 +265,8 @@ export class RunEngine {
         key: sessionKey(s), state: cellState,
         costUsd: cost, latencyMs: sub.durationMs,
         stepCount: laneServer.stepCount,
+        inputTokens: laneServer.inputTokens,
+        outputTokens: laneServer.outputTokens,
         verifyExitCode: sub.exitCode,
         failureClass: sub.failureClass,
       };
@@ -282,6 +287,7 @@ export class RunEngine {
       this.bus.emit('session:failed', {
         key: sessionKey(s), state: 'error',
         costUsd: 0, latencyMs: 0, stepCount: 0,
+        inputTokens: 0, outputTokens: 0,
         verifyExitCode: null, failureClass: 'setup_error',
       });
       return { state: 'error', costUsd: 0 };
@@ -325,11 +331,11 @@ function sessionKey(s: PlannedSession): SessionKey {
 }
 
 function queuedUpdate(s: PlannedSession): CellUpdate {
-  return { key: sessionKey(s), state: 'queued', costUsd: 0, latencyMs: 0, stepCount: 0 };
+  return { key: sessionKey(s), state: 'queued', costUsd: 0, latencyMs: 0, stepCount: 0, inputTokens: 0, outputTokens: 0 };
 }
 
 function runningUpdate(s: PlannedSession, cost: number, port: number): CellUpdate {
-  return { key: sessionKey(s), state: 'running', costUsd: cost, latencyMs: 0, stepCount: 0, verifyExitCode: null };
+  return { key: sessionKey(s), state: 'running', costUsd: cost, latencyMs: 0, stepCount: 0, inputTokens: 0, outputTokens: 0, verifyExitCode: null };
 }
 
 function renderSessionMd(

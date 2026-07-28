@@ -1,10 +1,22 @@
 import React, { useEffect, useState } from 'react';
+import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { Box, Text, useInput } from 'ink';
 import { useStore, parseLane } from '../state/store.js';
 import { ALL_MODELS, getDestinations, P50_RUN_SECONDS } from '../data/fixtures.js';
 import { SCREEN_ACCENT, familyColor, CELL_COLOR, CELL_GLYPH } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 import type { OrCatalog, OrEndpoint } from '../data/schema.js';
+
+function openInFileManager(dir: string): void {
+  // macOS: `open`; Linux: `xdg-open`; Windows: `explorer`. spawn is fire-and-forget.
+  const platform = process.platform;
+  const cmd = platform === 'darwin' ? 'open' : platform === 'win32' ? 'explorer' : 'xdg-open';
+  try {
+    const child = spawn(cmd, [dir], { detached: true, stdio: 'ignore' });
+    child.unref();
+  } catch { /* silent — the artifact paths are printed onscreen too */ }
+}
 
 // Resolve model + destination display metadata from wherever we can find it —
 // the fixture catalog is only a mock. Real user runs select models from the
@@ -49,6 +61,12 @@ export function LiveProgress() {
   const reset = useStore((s) => s.reset);
   const goTo = useStore((s) => s.goTo);
   const orCatalog = useStore((s) => s.orCatalog);
+  const configDir = useStore((s) => s.configDir);
+  const runId = useStore((s) => s.runId);
+  const totalInputTokens = useStore((s) => s.totalInputTokens);
+  const totalOutputTokens = useStore((s) => s.totalOutputTokens);
+
+  const runDir = runId ? path.join(configDir, 'runs', runId) : null;
 
   // Force a re-render every second so elapsed/eta refresh even while the bus
   // is idle between session transitions.
@@ -66,8 +84,13 @@ export function LiveProgress() {
       if (input === 'q' || key.escape) { abortRun(); }
       return;
     }
+    // Post-run: `o` (or Enter) opens the run dir in the OS file manager.
+    if ((input === 'o' || key.return) && runDir) {
+      openInFileManager(runDir);
+      return;
+    }
+    if (input === 'r') { reset(); goTo('pickTasks'); return; }
     if (input === 'q' || key.escape) process.exit(0);
-    if (input === 'r') { reset(); goTo('pickTasks'); }
   });
 
   const includedTasks = tasks.filter((t) => t.included);
@@ -85,14 +108,14 @@ export function LiveProgress() {
     <Frame
       title={runFinishedAt ? 'Run complete' : 'Running'}
       accent={runFinishedAt ? '#22c55e' : SCREEN_ACCENT.liveProgress}
-      subtitle={`${doneCells}/${totalCells} · $${totalSpend.toFixed(2)} · elapsed ${fmtDuration(elapsedSec)}${!runFinishedAt && etaSec ? ` · eta ${fmtDuration(etaSec)}` : ''}`}
+      subtitle={`${doneCells}/${totalCells} · $${totalSpend.toFixed(4)} · ${totalInputTokens}/${totalOutputTokens} tok · elapsed ${fmtDuration(elapsedSec)}${!runFinishedAt && etaSec ? ` · eta ${fmtDuration(etaSec)}` : ''}`}
       footer={
         runFinishedAt ? (
           <Text color="gray">
-            <Text color="#22c55e" bold>DONE</Text> · <Text color="cyan">o / enter</Text> open report · <Text color="cyan">r</Text> run again · <Text color="cyan">q</Text> quit
+            <Text color="#22c55e" bold>DONE</Text> · <Text color="cyan">o</Text>/<Text color="cyan">enter</Text> open run dir · <Text color="cyan">r</Text> run again · <Text color="cyan">q</Text> quit
           </Text>
         ) : (
-          <Text color="gray"><Text color="cyan">q</Text> soft-stop (finish in-flight, write partial report)</Text>
+          <Text color="gray"><Text color="cyan">x</Text> abort · <Text color="cyan">q</Text> soft-stop</Text>
         )
       }
     >
@@ -161,17 +184,26 @@ export function LiveProgress() {
         <Text color={CELL_COLOR.error}>{CELL_GLYPH.error} </Text><Text color="gray">infra-error</Text>
       </Box>
 
-      {runFinishedAt && reportPath && (
+      {runFinishedAt && runDir && (
         <Box marginTop={1} flexDirection="column" flexShrink={0}>
           <Text color="#22c55e" bold>Run complete.</Text>
           <Box marginTop={0}>
-            <Text color="gray">Wire log + SQLite + per-session MD at:</Text>
+            <Text color="gray">Run dir: </Text>
+            <Text color="cyan" bold>{runDir}</Text>
+          </Box>
+          <Box marginTop={0}>
+            <Text color="gray" dimColor>  traffic.jsonl · sessions/&lt;session_id&gt;.md · meta.json</Text>
           </Box>
           <Box>
-            <Text color="cyan" bold>  {reportPath}</Text>
+            <Text color="gray">SQLite: </Text>
+            <Text color="cyan">{path.join(configDir, 'db.sqlite')}</Text>
           </Box>
           <Box marginTop={1}>
-            <Text color="gray" dimColor>traffic.jsonl · db.sqlite · sessions/&lt;session_id&gt;.md · meta.json</Text>
+            <Text color="gray">Press </Text>
+            <Text color="cyan" bold>o</Text>
+            <Text color="gray"> or </Text>
+            <Text color="cyan" bold>enter</Text>
+            <Text color="gray"> to open the run dir in Finder.</Text>
           </Box>
         </Box>
       )}

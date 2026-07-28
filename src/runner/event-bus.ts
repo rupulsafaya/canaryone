@@ -23,6 +23,8 @@ export interface CellUpdate {
   costUsd: number;
   latencyMs: number;
   stepCount: number;
+  inputTokens: number;
+  outputTokens: number;
   verifyExitCode?: number | null;
   failureClass?: string | null;
 }

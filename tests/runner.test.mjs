@@ -61,7 +61,10 @@ async function main() {
       destinationSlug: 'openrouter:openai',
       router: 'openrouter',
       providerTag: null,          // OR picks default provider
-      endpoint: null,             // no pricing lookup for M1
+      endpoint: null,             // no per-provider endpoint hydration
+      // Exercise the fallback pricing path (mirrors what happens when the
+      // picker's providerTag doesn't match any endpoint from /endpoints).
+      fallbackModelPrice: { input: 0.05, output: 0.20 },
     }],
     tasks: [{ id: 't01', file: 'test/agent.test.js' }],
     orKey,

@@ -57,6 +57,8 @@ type State = {
   runStartedAt: number | null;
   runFinishedAt: number | null;
   totalSpend: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
   reportPath: string | null;
   runId: string | null;
   runError: string | null;
@@ -132,6 +134,8 @@ export const useStore = create<State>((set, get) => ({
   runStartedAt: null,
   runFinishedAt: null,
   totalSpend: 0,
+  totalInputTokens: 0,
+  totalOutputTokens: 0,
   reportPath: null,
   runId: null,
   runError: null,
@@ -338,20 +342,26 @@ export const useStore = create<State>((set, get) => ({
 
     // Build LaneSpec[] from selected models × destinations, hydrating endpoint
     // metadata from the OR catalog so the proxy has pricing for cost math.
+    // Fallback: model-level $/M from catalog.models[i] — used when the exact
+    // endpoint lookup misses (e.g. providerTag drift between picker + catalog).
     const laneSpecs: LaneSpec[] = [];
     for (const key of laneKeys) {
       const { model: modelSlug, dest: destSlug } = parseLane(key);
       const endpoints = s.orCatalog?.endpointsBySlug?.[modelSlug]?.endpoints ?? [];
-      // Destination slug format: "<router>:<providerTag>" — e.g. "openrouter:baseten/fp8".
+      const modelMeta = s.orCatalog?.models.find((m) => m.slug === modelSlug) ?? null;
       const [router, ...providerParts] = destSlug.split(':');
       const providerTag = providerParts.join(':') || null;
       const endpoint = endpoints.find((e) => e.providerTag === providerTag) ?? null;
+      const fallbackModelPrice = modelMeta
+        ? { input: modelMeta.inputPrice, output: modelMeta.outputPrice }
+        : null;
       laneSpecs.push({
         modelSlug,
         destinationSlug: destSlug,
         router: router || 'openrouter',
         providerTag,
         endpoint,
+        fallbackModelPrice,
       });
     }
 
@@ -398,6 +408,8 @@ export const useStore = create<State>((set, get) => ({
       runStartedAt: Date.now(),
       runFinishedAt: null,
       totalSpend: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
       reportPath: `.c1/runs/${spec.runId}/`,
       runId: spec.runId,
       runError: null,
@@ -421,6 +433,8 @@ export const useStore = create<State>((set, get) => ({
     runStartedAt: null,
     runFinishedAt: null,
     totalSpend: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
     reportPath: null,
     runId: null,
     runError: null,
@@ -456,6 +470,8 @@ function applyCellUpdate(u: CellUpdate): void {
     return {
       cells: nextCells,
       totalSpend: s.totalSpend + u.costUsd,
+      totalInputTokens: s.totalInputTokens + u.inputTokens,
+      totalOutputTokens: s.totalOutputTokens + u.outputTokens,
     };
   });
 }
