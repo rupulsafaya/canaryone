@@ -13,29 +13,49 @@ export function Confirm() {
   const parallelism = useStore((s) => s.parallelism);
   const maxSpend = useStore((s) => s.maxSpend);
   const setMaxSpend = useStore((s) => s.setMaxSpend);
+  const setParallelism = useStore((s) => s.setParallelism);
+  const setRepeats = useStore((s) => s.setRepeats);
   const goTo = useStore((s) => s.goTo);
   const startRun = useStore((s) => s.startRun);
-  const [editingCap, setEditingCap] = useState(false);
-  const [capDraft, setCapDraft] = useState(maxSpend.toFixed(2));
+  type EditField = 'cap' | 'parallelism' | 'repeats';
+  const [editing, setEditing] = useState<EditField | null>(null);
+  const [draft, setDraft] = useState('');
+
+  const openEditor = (field: EditField) => {
+    const current = field === 'cap' ? maxSpend.toFixed(2) : field === 'parallelism' ? String(parallelism) : String(repeats);
+    setDraft(current);
+    setEditing(field);
+  };
+  const commitEditor = () => {
+    if (editing === 'cap') {
+      const v = parseFloat(draft);
+      if (!isNaN(v) && v > 0) setMaxSpend(v);
+    } else if (editing === 'parallelism') {
+      const v = parseInt(draft, 10);
+      if (!isNaN(v) && v > 0) setParallelism(v);
+    } else if (editing === 'repeats') {
+      const v = parseInt(draft, 10);
+      if (!isNaN(v) && v > 0) setRepeats(v);
+    }
+    setEditing(null);
+  };
 
   useInput((input, key) => {
-    if (editingCap) {
-      if (key.return) {
-        const v = parseFloat(capDraft);
-        if (!isNaN(v) && v > 0) setMaxSpend(v);
-        setEditingCap(false);
-        return;
-      }
-      if (key.escape) { setEditingCap(false); setCapDraft(maxSpend.toFixed(2)); return; }
-      if (key.backspace || key.delete) { setCapDraft((d) => d.slice(0, -1)); return; }
-      if (input && /^[\d.]$/.test(input)) setCapDraft((d) => d + input);
+    if (editing) {
+      if (key.return) { commitEditor(); return; }
+      if (key.escape) { setEditing(null); return; }
+      if (key.backspace || key.delete) { setDraft((d) => d.slice(0, -1)); return; }
+      const allowed = editing === 'cap' ? /^[\d.]$/ : /^[\d]$/;
+      if (input && allowed.test(input)) setDraft((d) => d + input);
       return;
     }
     if (key.return) startRun();
     else if (input === 't') goTo('pickTasks');
     else if (input === 'm') goTo('pickModels');
     else if (input === 'h') goTo('pickDestinations');
-    else if (input === 'c') { setCapDraft(maxSpend.toFixed(2)); setEditingCap(true); }
+    else if (input === 'c') openEditor('cap');
+    else if (input === 'p') openEditor('parallelism');
+    else if (input === 'r') openEditor('repeats');
     else if (input === 'q' || key.escape) process.exit(0);
   });
 
@@ -66,16 +86,17 @@ export function Confirm() {
       title="Confirm & run"
       accent={SCREEN_ACCENT.confirm}
       footer={
-        editingCap ? (
+        editing ? (
           <Text color="cyan">
-            New cap ($): <Text color="white" bold>{capDraft}</Text><Text color="gray">▏</Text><Text color="gray"> · enter save · esc cancel</Text>
+            {editing === 'cap' ? 'New cap ($): ' : editing === 'parallelism' ? 'New parallelism: ' : 'New repeats: '}
+            <Text color="white" bold>{draft}</Text><Text color="gray">▏</Text><Text color="gray"> · enter save · esc cancel</Text>
           </Text>
         ) : (
           <Text color="gray">
             {overCap
               ? <Text color="gray">enter <Text dimColor>(blocked, over cap)</Text></Text>
               : <Text color="#22c55e" bold>enter RUN</Text>}
-            <Text color="gray"> · </Text><Text color="cyan">c</Text> cap · <Text color="cyan">t</Text> tasks · <Text color="cyan">m</Text> models · <Text color="cyan">h</Text> hosts · <Text color="cyan">q</Text> quit
+            <Text color="gray"> · </Text><Text color="cyan">c</Text> cap · <Text color="cyan">p</Text> parallelism · <Text color="cyan">r</Text> repeats · <Text color="cyan">t</Text> tasks · <Text color="cyan">m</Text> models · <Text color="cyan">h</Text> hosts · <Text color="cyan">q</Text> quit
           </Text>
         )
       }
@@ -100,7 +121,9 @@ export function Confirm() {
       </Section>
 
       <Section title="Time">
-        <Text>~ <Text color="white" bold>{fmtDuration(seqSec)}</Text> sequential · with parallelism={parallelism}: <Text color="cyan" bold>~ {fmtDuration(parSec)}</Text> wall-clock</Text>
+        <Text>
+          ~ <Text color="white" bold>{fmtDuration(seqSec)}</Text> sequential · with parallelism=<Text color="cyan" bold>{parallelism}</Text>: <Text color="cyan" bold>~ {fmtDuration(parSec)}</Text> wall-clock <Text color="gray" dimColor>(press <Text color="cyan">p</Text> to change)</Text>
+        </Text>
       </Section>
 
       <Section title="Cost">

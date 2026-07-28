@@ -35,6 +35,8 @@ type State = {
   toggleDestination: (modelSlug: string, destSlug: string) => void;
   setFocusedTask: (id: string | null) => void;
   setMaxSpend: (v: number) => void;
+  setParallelism: (v: number) => void;
+  setRepeats: (v: number) => void;
   lanes: () => LaneKey[];
   startRun: () => void;
   tick: () => void;
@@ -100,6 +102,8 @@ export const useStore = create<State>((set, get) => ({
   }),
   setFocusedTask: (id) => set({ focusedTaskId: id }),
   setMaxSpend: (v) => set({ maxSpend: v }),
+  setParallelism: (v) => set({ parallelism: Math.max(1, Math.min(32, Math.floor(v))) }),
+  setRepeats: (v) => set({ repeats: Math.max(1, Math.min(20, Math.floor(v))) }),
   lanes: () => {
     const s = get();
     const out: LaneKey[] = [];

@@ -4,6 +4,8 @@ import { useStore } from '../state/store.js';
 import { TOP_MODELS, OTHER_MODELS, ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, getDestinations } from '../data/fixtures.js';
 import { SCREEN_ACCENT, familyColor, changeColor } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
+import { ScrollHint } from '../components/ScrollHint.tsx';
+import { useScrollWindow, useTerminalDimensions } from '../hooks/useScrollWindow.ts';
 
 export function PickModels() {
   const selectedModels = useStore((s) => s.selectedModels);
@@ -34,6 +36,12 @@ export function PickModels() {
   }, [query]);
 
   const modelRows = rows.filter((r) => r.kind === 'model') as Extract<Row, { kind: 'model' }>[];
+  const modelRowIndices = useMemo(() => rows.map((r, i) => ({ r, i })).filter((x) => x.r.kind === 'model').map((x) => x.i), [rows]);
+  const [, termRows] = useTerminalDimensions();
+  // Chrome: border(2) + title(1) + margin(1) + col headers(1) + divider(1) + footer(3) + scroll hints(2) = ~11
+  const visibleRows = Math.max(6, termRows - 11);
+  const focusedRowIdx = modelRowIndices[cursor] ?? 0;
+  const { windowStart, windowEnd, overflowAbove, overflowBelow } = useScrollWindow(rows.length, focusedRowIdx, visibleRows);
 
   useInput((input, key) => {
     if (searching) {
@@ -98,12 +106,15 @@ export function PickModels() {
       </Box>
       <Box flexShrink={0}><Text color="gray" dimColor>{'─'.repeat(95)}</Text></Box>
 
+      <ScrollHint side="above" count={overflowAbove} />
+
       {(() => {
-        let modelIdx = -1;
-        return rows.map((row, i) => {
+        const windowed = rows.slice(windowStart, windowEnd);
+        return windowed.map((row, offset) => {
+          const i = windowStart + offset;
           if (row.kind === 'header') {
             return (
-              <Box key={`h${i}`} marginTop={i === 0 ? 0 : 1} flexShrink={0}>
+              <Box key={`h${i}`} marginTop={i === 0 || offset === 0 ? 0 : 1} flexShrink={0}>
                 <Text color="cyan" bold>▸ {row.label}</Text>
               </Box>
             );
@@ -115,8 +126,7 @@ export function PickModels() {
               </Box>
             );
           }
-          modelIdx++;
-          const active = modelIdx === cursor;
+          const active = i === focusedRowIdx;
           const m = row.model;
           const check = selectedModels.has(m.slug) ? '●' : '○';
           const rankStr = m.rankPosition ? String(m.rankPosition).padStart(2, ' ') : '  ';
@@ -138,6 +148,8 @@ export function PickModels() {
           );
         });
       })()}
+
+      <ScrollHint side="below" count={overflowBelow} />
     </Frame>
   );
 }

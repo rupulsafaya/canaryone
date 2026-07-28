@@ -4,6 +4,8 @@ import { useStore } from '../state/store.js';
 import { ALL_MODELS, getDestinations, isDestinationAvailable, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, Router } from '../data/fixtures.js';
 import { SCREEN_ACCENT, familyColor } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
+import { ScrollHint } from '../components/ScrollHint.tsx';
+import { useScrollWindow, useTerminalDimensions } from '../hooks/useScrollWindow.ts';
 
 type Row =
   | { kind: 'model'; modelSlug: string }
@@ -32,6 +34,7 @@ export function PickDestinations() {
   const repeats = useStore((s) => s.repeats);
   const goTo = useStore((s) => s.goTo);
   const [cursor, setCursor] = useState(0);
+  const [, termRows] = useTerminalDimensions();
 
   const rows: Row[] = useMemo(() => {
     const out: Row[] = [];
@@ -44,21 +47,24 @@ export function PickDestinations() {
     return out;
   }, [selectedModels]);
 
-  const destRows = useMemo(
-    () => rows.map((r, i) => ({ r, i })).filter((x) => x.r.kind === 'destination'),
-    [rows]
-  );
+  const destRowIndices = useMemo(() => rows.map((r, i) => ({ r, i })).filter((x) => x.r.kind === 'destination').map((x) => x.i), [rows]);
 
   useInput((input, key) => {
     if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
-    else if (key.downArrow) setCursor((c) => Math.min(destRows.length - 1, c + 1));
+    else if (key.downArrow) setCursor((c) => Math.min(destRowIndices.length - 1, c + 1));
     else if (input === ' ') {
-      const r = destRows[cursor]?.r;
+      const rowIdx = destRowIndices[cursor];
+      const r = rows[rowIdx];
       if (r?.kind === 'destination') toggleDestination(r.modelSlug, r.destSlug);
     }
     else if (key.return) goTo('confirm');
     else if (input === 'b' || key.escape) goTo('pickModels');
   });
+
+  // Chrome: border(2) + title(1) + margin(1) + info(1) + margin(1) + col headers(1) + divider(1) + footer(3) + scroll hints(2) = ~13
+  const visibleRows = Math.max(6, termRows - 13);
+  const focusedRowIdx = destRowIndices[cursor] ?? 0;
+  const { windowStart, windowEnd, overflowAbove, overflowBelow } = useScrollWindow(rows.length, focusedRowIdx, visibleRows);
 
   const totalLanes = useMemo(() => {
     let n = 0;
@@ -81,8 +87,6 @@ export function PickDestinations() {
     return total;
   }, [selectedModels, selectedDestinations, includedTasks.length, repeats, totalLanes]);
 
-  const focusedDestIdx = destRows[cursor]?.i;
-
   return (
     <Frame
       title="Pick destinations (per model)"
@@ -95,7 +99,7 @@ export function PickDestinations() {
       }
     >
       <Box flexShrink={0}>
-        <Text color="gray" dimColor>Each (model, destination) is a lane. Destination = router + provider. Preview rows require your own key (e.g. NEBIUS_KEY) — direct/other-router adapters land v0.1+.</Text>
+        <Text color="gray" dimColor>Each (model, destination) is a lane. Destination = router + provider. Preview rows require your own key (e.g. NEBIUS_KEY).</Text>
       </Box>
       <Box marginTop={1} flexShrink={0} />
 
@@ -108,14 +112,17 @@ export function PickDestinations() {
       </Box>
       <Box flexShrink={0}><Text color="gray" dimColor>{'─'.repeat(90)}</Text></Box>
 
-      {rows.map((row, i) => {
+      <ScrollHint side="above" count={overflowAbove} />
+
+      {rows.slice(windowStart, windowEnd).map((row, offset) => {
+        const i = windowStart + offset;
         if (row.kind === 'model') {
           const model = ALL_MODELS.find((m) => m.slug === row.modelSlug);
           if (!model) return null;
           const all = getDestinations(row.modelSlug);
           const picked = selectedDestinations[row.modelSlug]?.size ?? 0;
           return (
-            <Box key={`m${i}`} marginTop={i === 0 ? 0 : 1} flexShrink={0}>
+            <Box key={`m${i}`} marginTop={offset === 0 || i === 0 ? 0 : 1} flexShrink={0}>
               <Box width={6}><Text color={familyColor(model.family)} bold>●   </Text></Box>
               <Box width={26}><Text color={familyColor(model.family)} bold>{model.displayName}</Text></Box>
               <Text color="gray" dimColor>{picked} of {all.length} destination{all.length === 1 ? '' : 's'} · {picked === 0 ? 'NO LANE (pick ≥1)' : `${picked} lane${picked === 1 ? '' : 's'}`}</Text>
@@ -124,7 +131,7 @@ export function PickDestinations() {
         }
         const dest = getDestinations(row.modelSlug).find((d) => d.slug === row.destSlug);
         if (!dest) return null;
-        const active = i === focusedDestIdx;
+        const active = i === focusedRowIdx;
         const isPicked = selectedDestinations[row.modelSlug]?.has(row.destSlug);
         const available = isDestinationAvailable(dest);
         const check = isPicked ? '●' : '○';
@@ -152,6 +159,8 @@ export function PickDestinations() {
           </Box>
         );
       })}
+
+      <ScrollHint side="below" count={overflowBelow} />
     </Frame>
   );
 }

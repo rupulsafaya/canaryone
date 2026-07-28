@@ -59,7 +59,9 @@ export function LiveProgress() {
     >
       {/* Header row */}
       <Box flexShrink={0}>
-        <Box width={40}><Text color="magenta" bold>Lane (Model · Destination [router])</Text></Box>
+        <Box width={20}><Text color="magenta" bold>Model</Text></Box>
+        <Box width={18}><Text color="magenta" bold>Destination</Text></Box>
+        <Box width={6}><Text color="magenta" bold>Rtr</Text></Box>
         {includedTasks.map((t) => (
           <Box key={t.id} width={4}><Text color="gray" bold>{t.id}</Text></Box>
         ))}
@@ -84,12 +86,15 @@ export function LiveProgress() {
         const etaLane = running ? P50_RUN_SECONDS * (queued + 1) : queued * P50_RUN_SECONDS;
         return (
           <Box key={lane} flexShrink={0}>
-            <Box width={40}>
+            <Box width={20}>
               <Text color={familyColor(model.family)} bold>● </Text>
-              <Text color={familyColor(model.family)}>{truncate(model.displayName, 14)}</Text>
-              <Text color="gray"> · </Text>
-              <Text color="magenta">{truncate(dest?.displayName ?? destSlug, 14)}</Text>
-              <Text color="#22d3ee" dimColor> [{dest?.router ?? 'or'}]</Text>
+              <Text color={familyColor(model.family)}>{truncate(model.displayName, 17)}</Text>
+            </Box>
+            <Box width={18}>
+              <Text color="magenta">{truncate(dest?.displayName ?? destSlug, 17)}</Text>
+            </Box>
+            <Box width={6}>
+              <Text color={routerTagColor(dest?.router)}>{shortRouter(dest?.router)}</Text>
             </Box>
             {includedTasks.map((t) => {
               const cell = laneCells[t.id];
@@ -135,6 +140,12 @@ export function LiveProgress() {
 
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
+}
+function shortRouter(r: string | undefined) {
+  return r === 'openrouter' ? 'OR' : r === 'direct' ? 'dir' : r === 'bedrock' ? 'bed' : r === 'vertex' ? 'ver' : r === 'azure' ? 'azr' : 'OR';
+}
+function routerTagColor(r: string | undefined) {
+  return r === 'direct' ? '#a78bfa' : r === 'bedrock' ? '#f97316' : r === 'vertex' ? '#4ade80' : r === 'azure' ? '#60a5fa' : '#22d3ee';
 }
 function fmtDuration(sec: number) {
   const m = Math.floor(sec / 60);

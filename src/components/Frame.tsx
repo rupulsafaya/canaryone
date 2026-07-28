@@ -33,7 +33,7 @@ export function Frame({ title, subtitle, accent, children, footer }: Props) {
       borderColor={accent}
       paddingX={1}
       height={frameHeight}
-      width={Math.min(cols, 200)}
+      width={Math.min(cols, 140)}
     >
       <Box flexDirection="row" justifyContent="space-between" flexShrink={0}>
         <Box>
