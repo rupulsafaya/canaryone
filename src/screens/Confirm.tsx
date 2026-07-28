@@ -106,17 +106,31 @@ export function Confirm() {
           <Text color="white" bold>{includedTasks.length}</Text> tasks × <Text color="white" bold>{lanes.length}</Text> lanes (model,host) × <Text color="white" bold>{repeats}</Text> repeats = <Text color="cyan" bold>{totalRuns} runs</Text>
         </Text>
         <Box marginTop={1} flexDirection="column">
-          <Text color="gray" dimColor>lanes:</Text>
+          <Box>
+            <Box width={3}><Text color="gray" dimColor>   </Text></Box>
+            <Box width={22}><Text color="gray" dimColor bold>Model</Text></Box>
+            <Box width={20}><Text color="gray" dimColor bold>Destination</Text></Box>
+            <Box width={12}><Text color="gray" dimColor bold>Router</Text></Box>
+            <Text color="gray" dimColor bold>$/M in · out</Text>
+          </Box>
           {lanes.slice(0, 8).map((l) => {
             const m = ALL_MODELS.find((x) => x.slug === l.model);
             if (!m) return null;
+            const provider = l.dest.replace(/^[^:]+:/, '');
             return (
-              <Text key={`${l.model}@${l.dest}`}>
-                {'  '}<Text color={familyColor(m.family)}>●</Text> <Text color="white">{m.displayName}</Text> <Text color="gray">·</Text> <Text color="magenta">{l.dest.replace(/^[^:]+:/, '')}</Text> <Text color="gray">·</Text> <Text color="#22d3ee">{l.router}</Text> <Text color="gray">· ${l.inputPrice.toFixed(2)}/${l.outputPrice.toFixed(2)}/M</Text>
-              </Text>
+              <Box key={`${l.model}@${l.dest}`}>
+                <Box width={3}>
+                  <Text> </Text>
+                  <Text color={familyColor(m.family)}>● </Text>
+                </Box>
+                <Box width={22}><Text color="white">{truncate(m.displayName, 20)}</Text></Box>
+                <Box width={20}><Text color="magenta">{truncate(provider, 18)}</Text></Box>
+                <Box width={12}><Text color={routerColor(l.router)}>{l.router}</Text></Box>
+                <Text color="gray">${l.inputPrice.toFixed(2)} · ${l.outputPrice.toFixed(2)}</Text>
+              </Box>
             );
           })}
-          {lanes.length > 8 && <Text color="gray" dimColor>{'  '}+ {lanes.length - 8} more lanes</Text>}
+          {lanes.length > 8 && <Box><Text color="gray" dimColor>{'  '}+ {lanes.length - 8} more lanes (view all in .c1/config.json)</Text></Box>}
         </Box>
       </Section>
 
@@ -161,6 +175,12 @@ function KV({ label, value, highlight, color }: { label: string; value: string; 
       <Text color={color ?? (highlight ? 'white' : 'gray')} bold={highlight}>{value}</Text>
     </Box>
   );
+}
+function truncate(s: string, n: number) {
+  return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
+}
+function routerColor(r: string) {
+  return r === 'direct' ? '#a78bfa' : r === 'bedrock' ? '#f97316' : r === 'vertex' ? '#4ade80' : r === 'azure' ? '#60a5fa' : '#22d3ee';
 }
 function fmtDuration(sec: number) {
   const h = Math.floor(sec / 3600);
