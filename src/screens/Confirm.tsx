@@ -1,9 +1,43 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useStore } from '../state/store.js';
-import { ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS, getDestinations } from '../data/fixtures.js';
+import {
+  ALL_MODELS as FIXTURE_ALL,
+  getDestinations as fixtureDestinations,
+  BASELINE_INPUT_TOKENS,
+  BASELINE_OUTPUT_TOKENS,
+  JUDGE_COST_PER_TASK,
+  P50_RUN_SECONDS,
+  type Destination,
+} from '../data/fixtures.js';
+import { readCachedEndpoints } from '../scan/or-catalog.js';
+import type { OrCatalog, OrEndpoint } from '../data/schema.js';
 import { SCREEN_ACCENT, familyColor } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
+
+const JUDGE_MODEL = 'anthropic/claude-haiku-4.5';
+
+function endpointsToDestinations(endpoints: OrEndpoint[]): Destination[] {
+  return endpoints.map((e) => ({
+    slug: `openrouter:${e.providerTag}`,
+    router: 'openrouter' as const,
+    provider: e.provider,
+    variant: e.quantization ?? undefined,
+    displayName: e.displayName,
+    inputPrice: e.inputPrice,
+    outputPrice: e.outputPrice,
+    isFirstParty: e.isFirstParty,
+    isPreview: false,
+  }));
+}
+
+function resolveDestinations(orCatalog: OrCatalog | null, modelSlug: string, useCatalog: boolean): Destination[] {
+  if (orCatalog) {
+    const cached = readCachedEndpoints(orCatalog, modelSlug);
+    if (cached) return endpointsToDestinations(cached);
+  }
+  return useCatalog ? [] : fixtureDestinations(modelSlug);
+}
 
 export function Confirm() {
   const tasks = useStore((s) => s.tasks);
@@ -17,9 +51,20 @@ export function Confirm() {
   const setRepeats = useStore((s) => s.setRepeats);
   const goTo = useStore((s) => s.goTo);
   const startRun = useStore((s) => s.startRun);
+  const orCatalog = useStore((s) => s.orCatalog);
+  const loadEndpointsFor = useStore((s) => s.loadEndpointsFor);
   type EditField = 'cap' | 'parallelism' | 'repeats';
   const [editing, setEditing] = useState<EditField | null>(null);
   const [draft, setDraft] = useState('');
+
+  // Ensure real endpoints are loaded so pricing on this screen matches what
+  // was shown on PickDestinations. Idempotent — cached hits are instant.
+  const modelSlugs = useMemo(() => [...selectedModels], [selectedModels]);
+  useEffect(() => {
+    if (modelSlugs.length > 0) void loadEndpointsFor(modelSlugs);
+  }, [modelSlugs, loadEndpointsFor]);
+
+  const useCatalog = orCatalog !== null && orCatalog.models.length > 0;
 
   const openEditor = (field: EditField) => {
     const current = field === 'cap' ? maxSpend.toFixed(2) : field === 'parallelism' ? String(parallelism) : String(repeats);
@@ -60,31 +105,48 @@ export function Confirm() {
   });
 
   const includedTasks = tasks.filter((t) => t.included);
-  const lanes: { model: string; dest: string; router: string; inputPrice: number; outputPrice: number }[] = [];
+  const lanes: { model: string; dest: string; router: string; inputPrice: number; outputPrice: number; providerDisplay: string }[] = [];
   for (const model of selectedModels) {
+    const destinations = resolveDestinations(orCatalog, model, useCatalog);
     const dests = selectedDestinations[model] ?? new Set<string>();
     for (const destSlug of dests) {
-      const d = getDestinations(model).find((x) => x.slug === destSlug);
+      const d = destinations.find((x) => x.slug === destSlug);
       if (!d) continue;
-      lanes.push({ model, dest: destSlug, router: d.router, inputPrice: d.inputPrice, outputPrice: d.outputPrice });
+      lanes.push({
+        model,
+        dest: destSlug,
+        router: d.router,
+        inputPrice: d.inputPrice,
+        outputPrice: d.outputPrice,
+        providerDisplay: d.displayName,
+      });
     }
   }
+
   const totalRuns = includedTasks.length * lanes.length * repeats;
   const seqSec = totalRuns * P50_RUN_SECONDS;
-  const parSec = Math.max(P50_RUN_SECONDS, seqSec / Math.min(parallelism, lanes.length || 1));
+  // Parallelism is capped by total runs (nothing to parallelize past that),
+  // NOT by lane count — sessions on the same lane are independent subprocesses
+  // and can run concurrently. And no individual session can run faster than
+  // P50_RUN_SECONDS.
+  const effectiveConcurrency = Math.min(parallelism, Math.max(1, totalRuns));
+  const parSec = totalRuns === 0 ? 0 : Math.max(P50_RUN_SECONDS, seqSec / effectiveConcurrency);
 
   let destCost = 0;
   for (const l of lanes) {
     destCost += ((BASELINE_INPUT_TOKENS / 1_000_000) * l.inputPrice + (BASELINE_OUTPUT_TOKENS / 1_000_000) * l.outputPrice) * includedTasks.length * repeats;
   }
-  const judgeCost = JUDGE_COST_PER_TASK * includedTasks.length * lanes.length * repeats;
+  const judgeCost = JUDGE_COST_PER_TASK * totalRuns;
   const totalCost = destCost + judgeCost;
   const overCap = totalCost > maxSpend;
+  const credits = orCatalog?.credits ?? null;
+  const overCredits = credits != null && totalCost > credits;
 
   return (
     <Frame
       title="Confirm & run"
       accent={SCREEN_ACCENT.confirm}
+      subtitle={credits != null ? `credits $${credits.toFixed(2)}` : ''}
       footer={
         editing ? (
           <Text color="cyan">
@@ -95,60 +157,76 @@ export function Confirm() {
           <Text color="gray">
             {overCap
               ? <Text color="gray">enter <Text dimColor>(blocked, over cap)</Text></Text>
-              : <Text color="#22c55e" bold>enter RUN</Text>}
-            <Text color="gray"> · </Text><Text color="cyan">c</Text> cap · <Text color="cyan">p</Text> parallelism · <Text color="cyan">r</Text> repeats · <Text color="cyan">t</Text> tasks · <Text color="cyan">m</Text> models · <Text color="cyan">h</Text> hosts · <Text color="cyan">q</Text> quit
+              : totalRuns === 0
+                ? <Text color="gray">enter <Text dimColor>(blocked, 0 runs)</Text></Text>
+                : <Text color="#22c55e" bold>enter RUN</Text>}
+            <Text color="gray"> · </Text><Text color="cyan">c</Text> cap · <Text color="cyan">p</Text> parallelism · <Text color="cyan">r</Text> repeats · <Text color="cyan">t</Text> tasks · <Text color="cyan">m</Text> models · <Text color="cyan">h</Text> destinations · <Text color="cyan">q</Text> quit
           </Text>
         )
       }
     >
       <Section title="Scope">
         <Text>
-          <Text color="white" bold>{includedTasks.length}</Text> tasks × <Text color="white" bold>{lanes.length}</Text> lanes (model,host) × <Text color="white" bold>{repeats}</Text> repeats = <Text color="cyan" bold>{totalRuns} runs</Text>
+          <Text color="white" bold>{includedTasks.length}</Text> tasks × <Text color="white" bold>{lanes.length}</Text> lanes (model, destination) × <Text color="white" bold>{repeats}</Text> repeats = <Text color="cyan" bold>{totalRuns} runs</Text>
         </Text>
         <Box marginTop={1} flexDirection="column">
           <Box>
             <Box width={3}><Text color="gray" dimColor>   </Text></Box>
-            <Box width={22}><Text color="gray" dimColor bold>Model</Text></Box>
-            <Box width={20}><Text color="gray" dimColor bold>Destination</Text></Box>
+            <Box width={26}><Text color="gray" dimColor bold>Model</Text></Box>
+            <Box width={28}><Text color="gray" dimColor bold>Provider</Text></Box>
             <Box width={12}><Text color="gray" dimColor bold>Router</Text></Box>
             <Text color="gray" dimColor bold>$/M in · out</Text>
           </Box>
-          {lanes.slice(0, 8).map((l) => {
-            const m = ALL_MODELS.find((x) => x.slug === l.model);
+          {lanes.slice(0, 10).map((l) => {
+            const catalogModel = orCatalog?.models.find((x) => x.slug === l.model);
+            const fixtureModel = FIXTURE_ALL.find((x) => x.slug === l.model);
+            const m = catalogModel ?? fixtureModel;
             if (!m) return null;
-            const provider = l.dest.replace(/^[^:]+:/, '');
             return (
               <Box key={`${l.model}@${l.dest}`}>
                 <Box width={3}>
                   <Text> </Text>
                   <Text color={familyColor(m.family)}>● </Text>
                 </Box>
-                <Box width={22}><Text color="white">{truncate(m.displayName, 20)}</Text></Box>
-                <Box width={20}><Text color="magenta">{truncate(provider, 18)}</Text></Box>
+                <Box width={26}><Text color="white">{truncate(m.displayName, 24)}</Text></Box>
+                <Box width={28}><Text color="magenta">{truncate(l.providerDisplay, 26)}</Text></Box>
                 <Box width={12}><Text color={routerColor(l.router)}>{l.router}</Text></Box>
                 <Text color="gray">${l.inputPrice.toFixed(2)} · ${l.outputPrice.toFixed(2)}</Text>
               </Box>
             );
           })}
-          {lanes.length > 8 && <Box><Text color="gray" dimColor>{'  '}+ {lanes.length - 8} more lanes (view all in .c1/config.json)</Text></Box>}
+          {lanes.length > 10 && <Box><Text color="gray" dimColor>{'  '}+ {lanes.length - 10} more lanes (view all in .c1/config.json)</Text></Box>}
+          {lanes.length === 0 && <Box><Text color="#ef4444" dimColor>{'  '}no lanes yet — press <Text color="cyan">m</Text> to pick models, then <Text color="cyan">h</Text> for destinations</Text></Box>}
         </Box>
       </Section>
 
       <Section title="Time">
         <Text>
-          ~ <Text color="white" bold>{fmtDuration(seqSec)}</Text> sequential · with parallelism=<Text color="cyan" bold>{parallelism}</Text>: <Text color="cyan" bold>~ {fmtDuration(parSec)}</Text> wall-clock <Text color="gray" dimColor>(press <Text color="cyan">p</Text> to change)</Text>
+          ~ <Text color="white" bold>{fmtDuration(seqSec)}</Text> sequential · with parallelism=<Text color="cyan" bold>{parallelism}</Text> (concurrent=<Text color="cyan">{effectiveConcurrency}</Text>): <Text color="cyan" bold>~ {fmtDuration(parSec)}</Text> wall-clock <Text color="gray" dimColor>(press <Text color="cyan">p</Text> to change)</Text>
         </Text>
       </Section>
 
       <Section title="Cost">
-        <KV label="Destination LLM (per-host prices × baseline tokens)" value={`~ $${destCost.toFixed(2)}`} />
-        <KV label={`Judge model ($${JUDGE_COST_PER_TASK.toFixed(3)} × ${totalRuns} tasks judged)`} value={`~ $${judgeCost.toFixed(2)}`} />
+        <KV
+          label={`Destination LLMs (${BASELINE_INPUT_TOKENS}+${BASELINE_OUTPUT_TOKENS} tok/run × ${totalRuns} runs, per-provider $)`}
+          value={`~ $${destCost.toFixed(2)}`}
+        />
+        <KV
+          label={`Judge (${JUDGE_MODEL}, ~$${JUDGE_COST_PER_TASK.toFixed(3)} × ${totalRuns} judgments)`}
+          value={`~ $${judgeCost.toFixed(2)}`}
+        />
         <Box><Text color="gray">  ─────────────────────────────────────────────────────</Text></Box>
         <KV label="Total estimated" value={`~ $${totalCost.toFixed(2)}`} highlight color={overCap ? '#ef4444' : '#22c55e'} />
         <Box marginTop={1} flexDirection="column">
           <Text color="gray">
             Guardrail: hard cap at <Text bold color={overCap ? '#ef4444' : 'white'}>${maxSpend.toFixed(2)}</Text> <Text color="gray" dimColor>(--max-spend override)</Text>
           </Text>
+          {credits != null && (
+            <Text color={overCredits ? '#ef4444' : 'gray'} dimColor={!overCredits}>
+              OpenRouter credits: <Text bold color={overCredits ? '#ef4444' : '#22c55e'}>${credits.toFixed(2)}</Text>
+              {overCredits && <Text color="#ef4444" bold>  ⚠ estimated cost exceeds credits</Text>}
+            </Text>
+          )}
           {overCap && (
             <Text color="#ef4444" bold>
               ⚠ OVER CAP by ${(totalCost - maxSpend).toFixed(2)} · press <Text color="cyan">c</Text> to raise cap, or <Text color="cyan">t</Text>/<Text color="cyan">m</Text>/<Text color="cyan">h</Text> to trim selection
@@ -171,7 +249,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function KV({ label, value, highlight, color }: { label: string; value: string; highlight?: boolean; color?: string }) {
   return (
     <Box>
-      <Box width={54}><Text color={highlight ? 'white' : 'gray'} bold={highlight}>{label}</Text></Box>
+      <Box width={70}><Text color={highlight ? 'white' : 'gray'} bold={highlight}>{label}</Text></Box>
       <Text color={color ?? (highlight ? 'white' : 'gray')} bold={highlight}>{value}</Text>
     </Box>
   );

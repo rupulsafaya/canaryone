@@ -13,7 +13,9 @@ export function TaskDetail() {
   const task = tasks.find((t) => t.id === focusedTaskId);
 
   useInput((input, key) => {
-    if (input === 'b' || key.escape || key.return) {
+    if (input === 'q') {
+      process.exit(0);
+    } else if (input === 'b' || key.escape || key.return) {
       setFocusedTask(null);
       goTo('pickTasks');
     } else if (input === ' ' && task) {
@@ -31,6 +33,8 @@ export function TaskDetail() {
     return <Frame title="Task detail" accent={SCREEN_ACCENT.pickTasks}><Text color="gray">No task selected. Press <Text color="cyan">b</Text> to return.</Text></Frame>;
   }
 
+  const isFixture = task.source !== 'scan';
+  const hasConfidence = Number.isFinite(task.confidence);
   const confColor = task.confidence >= 0.85 ? '#22c55e' : task.confidence >= 0.75 ? '#eab308' : '#f97316';
   const idx = tasks.findIndex((t) => t.id === task.id);
 
@@ -41,7 +45,7 @@ export function TaskDetail() {
       subtitle={`${idx + 1} of ${tasks.length}`}
       footer={
         <Text color="gray">
-          <Text color="cyan">←→↑↓</Text> next/prev task · <Text color="cyan">space</Text> toggle include · <Text color="cyan">enter / b</Text> back
+          <Text color="cyan">←→↑↓</Text> next/prev task · <Text color="cyan">space</Text> toggle include · <Text color="cyan">enter / b</Text> back · <Text color="cyan">q</Text> quit
         </Text>
       }
     >
@@ -52,24 +56,56 @@ export function TaskDetail() {
       <Row label="Name"><Text color="white">{task.name}</Text></Row>
       <Row label="File"><Text color="cyan">{task.file}</Text></Row>
       <Row label="Verify"><Text color="magenta">{task.verifyCmd}</Text></Row>
-      <Row label="Judge confidence">
-        <Text color={confColor}>
-          {task.confidence.toFixed(2)}
-          <Text color="gray" dimColor>{'  '}({task.confidence >= 0.85 ? 'high' : task.confidence >= 0.75 ? 'medium' : 'low'})</Text>
-        </Text>
-      </Row>
+      {typeof task.usesLLM === 'boolean' && (
+        <Row label="Uses LLM">
+          {task.usesLLM
+            ? <Text color="#22c55e" bold>● yes{task.llmEvidence ? <Text color="gray" dimColor>  — {task.llmEvidence}</Text> : null}</Text>
+            : <Text color="#94a3b8">○ no{task.llmEvidence ? <Text color="gray" dimColor>  — {task.llmEvidence}</Text> : null}</Text>}
+        </Row>
+      )}
+      {hasConfidence && (
+        <Row label="Judge confidence">
+          <Text color={confColor}>
+            {task.confidence.toFixed(2)}
+            <Text color="gray" dimColor>{'  '}({task.confidence >= 0.85 ? 'high' : task.confidence >= 0.75 ? 'medium' : 'low'})</Text>
+          </Text>
+        </Row>
+      )}
       <Box marginTop={1} flexDirection="column">
         <Text color="magenta" bold>Summary</Text>
         <Box paddingLeft={2} paddingTop={0}><Text color="gray">{task.summary}</Text></Box>
       </Box>
-      <Box marginTop={1} flexDirection="column">
-        <Text color="magenta" bold>What the classifier saw</Text>
-        <Box paddingLeft={2} flexDirection="column">
-          <Text color="gray">• Test file references an <Text color="white">agent invocation</Text> (spawn / import chain).</Text>
-          <Text color="gray">• Assertions gated on <Text color="white">multi-step LLM completion</Text>, not deterministic units.</Text>
-          <Text color="gray">• Verify command returns non-zero on failure; ground-truth outcome free.</Text>
+      {isFixture && (
+        <Box marginTop={1} flexDirection="column">
+          <Text color="magenta" bold>What the classifier saw</Text>
+          <Box paddingLeft={2} flexDirection="column">
+            <Text color="gray">• Test file references an <Text color="white">agent invocation</Text> (spawn / import chain).</Text>
+            <Text color="gray">• Assertions gated on <Text color="white">multi-step LLM completion</Text>, not deterministic units.</Text>
+            <Text color="gray">• Verify command returns non-zero on failure; ground-truth outcome free.</Text>
+          </Box>
         </Box>
-      </Box>
+      )}
+      {!isFixture && task.bullets && task.bullets.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          <Text color="magenta" bold>What the test does</Text>
+          <Box paddingLeft={2} flexDirection="column">
+            {task.bullets.map((b, i) => (
+              <Text key={i} color="gray">• {b}</Text>
+            ))}
+          </Box>
+          <Box marginTop={1} paddingLeft={2}>
+            <Text color="gray" dimColor>read by Claude Haiku 4.5 · cached in .c1/config.json</Text>
+          </Box>
+        </Box>
+      )}
+      {!isFixture && (!task.bullets || task.bullets.length === 0) && (
+        <Box marginTop={1} flexDirection="column">
+          <Text color="magenta" bold>What the test does</Text>
+          <Box paddingLeft={2}>
+            <Text color="gray" dimColor>(no summary — LLM read failed or was skipped)</Text>
+          </Box>
+        </Box>
+      )}
     </Frame>
   );
 }

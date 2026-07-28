@@ -9,6 +9,11 @@ export type Task = {
   confidence: number;
   verifyCmd: string;
   included: boolean;
+  // Optional — legacy fixture rows omit these. Absence = fixture semantics.
+  source?: 'fixture' | 'scan';
+  bullets?: string[];
+  usesLLM?: boolean;      // classified by Haiku during summarization
+  llmEvidence?: string;   // short phrase describing what signal was found
 };
 
 export type Model = {
@@ -43,13 +48,13 @@ export type Destination = {
 };
 
 export const TASKS: Task[] = [
-  { id: 't01', file: 'tests/agent/auth.spec.ts',      name: 'fix expired-token refresh flow',              summary: 'Agent must patch middleware to renew JWT on 401 before retry.', confidence: 0.92, verifyCmd: 'pnpm test tests/agent/auth.spec.ts',      included: true },
-  { id: 't02', file: 'tests/agent/checkout.spec.ts',  name: 'add idempotency key to charge',               summary: 'Refactor checkout handler; add I-key generation + Stripe replay.', confidence: 0.89, verifyCmd: 'pnpm test tests/agent/checkout.spec.ts', included: true },
-  { id: 't03', file: 'tests/agent/rate-limit.spec.ts', name: 'implement token-bucket rate limit',           summary: 'Multi-turn: draft, run tests, fix off-by-one on window slide.',      confidence: 0.94, verifyCmd: 'pnpm test tests/agent/rate-limit.spec.ts', included: true },
-  { id: 't04', file: 'tests/agent/search.spec.ts',    name: 'fix fuzzy-match false negatives',             summary: 'Diagnose ranking regression; tweak trigram threshold.',              confidence: 0.78, verifyCmd: 'pnpm test tests/agent/search.spec.ts',   included: true },
-  { id: 't05', file: 'tests/agent/pdf-parser.spec.ts', name: 'handle malformed PDF gracefully',            summary: 'Add null-safe fallback path; log corrupt-metadata cases.',           confidence: 0.86, verifyCmd: 'pnpm test tests/agent/pdf-parser.spec.ts', included: true },
-  { id: 't06', file: 'tests/agent/queue.spec.ts',     name: 'drain dead-letter on startup',                summary: 'Reprocess DLQ items; multi-tool: read config, spawn worker, verify.', confidence: 0.91, verifyCmd: 'pnpm test tests/agent/queue.spec.ts',    included: true },
-  { id: 't07', file: 'tests/agent/webhook.spec.ts',   name: 'verify webhook HMAC signatures',              summary: 'Bug-fix; classic tool_call pattern.',                                 confidence: 0.83, verifyCmd: 'pnpm test tests/agent/webhook.spec.ts',  included: true },
+  { id: 't01', file: 'tests/agent/auth.spec.ts',      name: 'fix expired-token refresh flow',              summary: 'Agent must patch middleware to renew JWT on 401 before retry.', confidence: 0.92, verifyCmd: 'pnpm test tests/agent/auth.spec.ts',      included: false},
+  { id: 't02', file: 'tests/agent/checkout.spec.ts',  name: 'add idempotency key to charge',               summary: 'Refactor checkout handler; add I-key generation + Stripe replay.', confidence: 0.89, verifyCmd: 'pnpm test tests/agent/checkout.spec.ts', included: false},
+  { id: 't03', file: 'tests/agent/rate-limit.spec.ts', name: 'implement token-bucket rate limit',           summary: 'Multi-turn: draft, run tests, fix off-by-one on window slide.',      confidence: 0.94, verifyCmd: 'pnpm test tests/agent/rate-limit.spec.ts', included: false},
+  { id: 't04', file: 'tests/agent/search.spec.ts',    name: 'fix fuzzy-match false negatives',             summary: 'Diagnose ranking regression; tweak trigram threshold.',              confidence: 0.78, verifyCmd: 'pnpm test tests/agent/search.spec.ts',   included: false},
+  { id: 't05', file: 'tests/agent/pdf-parser.spec.ts', name: 'handle malformed PDF gracefully',            summary: 'Add null-safe fallback path; log corrupt-metadata cases.',           confidence: 0.86, verifyCmd: 'pnpm test tests/agent/pdf-parser.spec.ts', included: false},
+  { id: 't06', file: 'tests/agent/queue.spec.ts',     name: 'drain dead-letter on startup',                summary: 'Reprocess DLQ items; multi-tool: read config, spawn worker, verify.', confidence: 0.91, verifyCmd: 'pnpm test tests/agent/queue.spec.ts',    included: false},
+  { id: 't07', file: 'tests/agent/webhook.spec.ts',   name: 'verify webhook HMAC signatures',              summary: 'Bug-fix; classic tool_call pattern.',                                 confidence: 0.83, verifyCmd: 'pnpm test tests/agent/webhook.spec.ts',  included: false},
   { id: 't08', file: 'tests/agent/migrate.spec.ts',   name: 'write migration 004_users_soft_delete',       summary: 'Author + apply migration; verify FK constraints.',                    confidence: 0.87, verifyCmd: 'pnpm test tests/agent/migrate.spec.ts',  included: false },
   { id: 't09', file: 'tests/agent/graph.spec.ts',     name: 'fix cycle in dependency resolver',            summary: 'Diagnose Kahn traversal bug; add cycle-detection.',                   confidence: 0.79, verifyCmd: 'pnpm test tests/agent/graph.spec.ts',    included: false },
   { id: 't10', file: 'tests/agent/i18n.spec.ts',      name: 'add fallback locale chain',                   summary: 'Refactor locale lookup; add es-MX → es → en cascade.',                confidence: 0.72, verifyCmd: 'pnpm test tests/agent/i18n.spec.ts',     included: false },

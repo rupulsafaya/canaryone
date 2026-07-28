@@ -1,7 +1,15 @@
 import { create } from 'zustand';
 import { TASKS, ALL_MODELS, Task, Cell, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS, getDestinations, isDestinationAvailable } from '../data/fixtures.js';
+import type { Config, ORKeySource, OrCatalog } from '../data/schema.js';
+import type { DeterministicScan } from '../scan/deterministic.js';
+import type { MatchedFile } from '../scan/glob.js';
+import { loadOrCatalog, fetchModelEndpoints, readCachedEndpoints } from '../scan/or-catalog.js';
+import { detectOrKey, writeConfig } from './../scan/orchestrator.js';
 
-export type Screen = 'onboarding' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'pickDestinations' | 'confirm' | 'liveProgress';
+export type CatalogStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type EndpointStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+export type Screen = 'keySetup' | 'onboarding' | 'summarizeTasks' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'pickDestinations' | 'confirm' | 'liveProgress';
 
 // A lane = one (model, destination) tuple we test. Each lane is a row in LiveProgress.
 // Destination slug already encodes (router, provider), so lane key = `${modelSlug}@${destSlug}`.
@@ -15,6 +23,19 @@ export const parseLane = (key: LaneKey): { model: string; dest: string } => {
 type State = {
   screen: Screen;
   cwd: string;
+  targetDir: string;
+  configDir: string;
+  forceRescan: boolean;
+  scanResult: DeterministicScan | null;
+  config: Config | null;
+  orKeyPresent: boolean;
+  orKeySource: ORKeySource | null;
+  matchedFiles: MatchedFile[];
+  orCatalog: OrCatalog | null;
+  orCatalogStatus: CatalogStatus;
+  orCatalogError: string | null;
+  endpointStatusBySlug: Record<string, EndpointStatus>;
+  endpointErrorBySlug: Record<string, string>;
   onboardingStep: number;
   tasks: Task[];
   selectedModels: Set<string>;                            // model slugs
@@ -29,6 +50,14 @@ type State = {
   totalSpend: number;
   reportPath: string | null;
   goTo: (screen: Screen) => void;
+  setScanResult: (r: DeterministicScan) => void;
+  setConfig: (c: Config) => void;
+  setOrKey: (present: boolean, source: ORKeySource | null) => void;
+  setMatchedFiles: (files: MatchedFile[]) => void;
+  loadCatalog: (force?: boolean) => Promise<void>;
+  loadEndpointsFor: (slugs: string[], force?: boolean) => Promise<void>;
+  persistTaskSelection: () => Promise<void>;
+  applyConfigToTasks: () => void;
   toggleTask: (id: string) => void;
   selectAllTasks: (v: boolean) => void;
   toggleModel: (slug: string) => void;
@@ -58,16 +87,25 @@ function defaultDestinationFor(modelSlug: string): Set<string> {
 }
 
 export const useStore = create<State>((set, get) => ({
-  screen: 'onboarding',
+  screen: 'keySetup',
   cwd: process.cwd(),
+  targetDir: process.cwd(),
+  configDir: process.cwd() + '/.c1',
+  forceRescan: false,
+  scanResult: null,
+  config: null,
+  orKeyPresent: false,
+  orKeySource: null,
+  matchedFiles: [],
+  orCatalog: null,
+  orCatalogStatus: 'idle',
+  orCatalogError: null,
+  endpointStatusBySlug: {},
+  endpointErrorBySlug: {},
   onboardingStep: 0,
   tasks: TASKS,
-  selectedModels: new Set(['anthropic/claude-haiku-4.5', 'deepseek/deepseek-v4-flash', 'z-ai/glm-5.2']),
-  selectedDestinations: {
-    'anthropic/claude-haiku-4.5': new Set(['openrouter:anthropic']),
-    'deepseek/deepseek-v4-flash': new Set(['openrouter:baidu']),
-    'z-ai/glm-5.2':               new Set(['openrouter:baseten/fp8']),
-  },
+  selectedModels: new Set<string>(),
+  selectedDestinations: {},
   repeats: 3,
   parallelism: 3,
   maxSpend: 10,
@@ -78,6 +116,110 @@ export const useStore = create<State>((set, get) => ({
   totalSpend: 0,
   reportPath: null,
   goTo: (screen) => set({ screen }),
+  setScanResult: (r) => set({ scanResult: r }),
+  setConfig: (c) => { set({ config: c }); get().applyConfigToTasks(); },
+  setOrKey: (present, source) => set({ orKeyPresent: present, orKeySource: source }),
+  setMatchedFiles: (files) => set({ matchedFiles: files }),
+  loadCatalog: async (force = false) => {
+    const s = get();
+    if (s.orCatalogStatus === 'loading') return;
+    if (!force && s.orCatalogStatus === 'ready' && s.orCatalog) return;
+    set({ orCatalogStatus: 'loading', orCatalogError: null });
+    try {
+      const detected = await detectOrKey();
+      const { catalog } = await loadOrCatalog({ orKey: detected.value ?? null, force });
+      set({ orCatalog: catalog, orCatalogStatus: 'ready', orCatalogError: null });
+    } catch (e) {
+      set({ orCatalogStatus: 'error', orCatalogError: e instanceof Error ? e.message : String(e) });
+    }
+  },
+  loadEndpointsFor: async (slugs, force = false) => {
+    const s = get();
+    // Ensure catalog is ready so persistEndpoints has a file to write into.
+    if (!s.orCatalog) await get().loadCatalog();
+    const currentStatus = get().endpointStatusBySlug;
+
+    // Filter which slugs actually need fetching.
+    const toFetch: string[] = [];
+    for (const slug of slugs) {
+      if (currentStatus[slug] === 'loading') continue;
+      const cached = readCachedEndpoints(get().orCatalog, slug);
+      if (!force && cached) {
+        set((st) => ({ endpointStatusBySlug: { ...st.endpointStatusBySlug, [slug]: 'ready' } }));
+        continue;
+      }
+      toFetch.push(slug);
+    }
+    if (toFetch.length === 0) return;
+
+    set((st) => {
+      const next = { ...st.endpointStatusBySlug };
+      for (const slug of toFetch) next[slug] = 'loading';
+      return { endpointStatusBySlug: next };
+    });
+
+    await Promise.all(toFetch.map(async (slug) => {
+      try {
+        await fetchModelEndpoints(slug);   // persists into or-catalog.json
+        // Reload catalog from cache to pick up the new endpoints map.
+        const detected = await detectOrKey();
+        const { catalog } = await loadOrCatalog({ orKey: detected.value ?? null });
+        set((st) => ({
+          orCatalog: catalog,
+          endpointStatusBySlug: { ...st.endpointStatusBySlug, [slug]: 'ready' },
+        }));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        set((st) => ({
+          endpointStatusBySlug: { ...st.endpointStatusBySlug, [slug]: 'error' },
+          endpointErrorBySlug: { ...st.endpointErrorBySlug, [slug]: msg },
+        }));
+      }
+    }));
+  },
+  persistTaskSelection: async () => {
+    const s = get();
+    if (!s.config) return;
+    const included = s.tasks.filter((t) => t.included).map((t) => t.file);
+    const nextConfig = {
+      ...s.config,
+      tasks: { ...s.config.tasks, included },
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await writeConfig(s.configDir, nextConfig);
+      set({ config: nextConfig });   // update in-memory without re-deriving tasks
+    } catch {
+      // Non-fatal — user's picks stay in-memory even if disk write fails.
+    }
+  },
+  applyConfigToTasks: () => {
+    const s = get();
+    if (!s.config) return;
+    const runnerCmd = s.config.runner.cmd;
+    const includedSet = new Set(s.config.tasks.included);
+    const hasSaved = s.config.tasks.included.length > 0;
+    const summaries = s.config.tasks.summaries ?? {};
+    const tasks: Task[] = s.matchedFiles.map((f, i) => {
+      const sum = summaries[f.relative];
+      return {
+        id: 't' + String(i + 1).padStart(2, '0'),
+        file: f.relative,
+        name: f.relative.split('/').pop() ?? f.relative,
+        summary: sum?.summary ?? f.relative,
+        confidence: NaN,        // marker: no classifier ran for scan-sourced tasks
+        verifyCmd: `${runnerCmd} ${f.relative}`,
+        // No auto-select — user must space-toggle each test. Saved config
+        // (if any) restores prior picks; otherwise start unchecked.
+        included: hasSaved ? includedSet.has(f.relative) : false,
+        source: 'scan',
+        bullets: sum?.bullets,
+        usesLLM: sum?.usesLLM,
+        llmEvidence: sum?.llmEvidence,
+      };
+    });
+    set({ tasks });
+  },
   toggleTask: (id) => set((s) => ({
     tasks: s.tasks.map((t) => (t.id === id ? { ...t, included: !t.included } : t)),
   })),
@@ -90,7 +232,8 @@ export const useStore = create<State>((set, get) => ({
       delete nextDests[slug];
     } else {
       nextModels.add(slug);
-      if (!nextDests[slug]) nextDests[slug] = defaultDestinationFor(slug);
+      // No default destination — user must pick one on PickDestinations.
+      if (!nextDests[slug]) nextDests[slug] = new Set<string>();
     }
     return { selectedModels: nextModels, selectedDestinations: nextDests };
   }),
@@ -179,7 +322,7 @@ export const useStore = create<State>((set, get) => ({
     set({ cells, totalSpend, runFinishedAt: done ? Date.now() : null });
   },
   reset: () => set({
-    screen: 'onboarding',
+    screen: 'keySetup',
     onboardingStep: 0,
     cells: {},
     runStartedAt: null,
