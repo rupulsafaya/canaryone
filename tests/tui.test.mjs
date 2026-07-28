@@ -301,20 +301,28 @@ tests.push(['J. Confirm: renders with lanes, correct parallel wall-clock', async
   });
 }]);
 
-// --- Scenario K: MethodologyCheck auto-advances on sdk-env fixture ---
-tests.push(['K. MethodologyCheck: sdk-env fixture auto-advances into PickTasks', async () => {
+// --- Scenario K: MethodologyCheck ready state on sdk-env fixture; Enter advances ---
+tests.push(['K. MethodologyCheck: sdk-env fixture renders verdict; Enter advances to PickTasks', async () => {
   const target = path.join(FIXTURES_DIR, 'sdk-env-repo');
   await withScratchDir(async (scratchDir) => {
     const t = spawnTui(['--start', 'onboarding', '--config-dir', scratchDir, '--target', target], { clearAuth: false });
     try {
       await t.waitFor('scan complete', 10000);
-      t.sendKey('enter');                                    // accept onboarding → SummarizeTasks
-      await t.waitFor(/summarized|all summaries ready/, 60000);   // Haiku summarize done
+      t.sendKey('enter');                                     // accept onboarding → SummarizeTasks
+      await t.waitFor(/summarized|all summaries ready/, 60000);
       t.reset();
-      t.sendKey('enter');                                    // advance → MethodologyCheck
+      t.sendKey('enter');                                     // advance → MethodologyCheck
       await t.waitFor(/canaryone.*Methodology/, 5000);
-      await t.waitFor(/✓ Detected/, 60000);                  // ready state renders
-      await t.waitFor(/Pick tasks/, 5000);                   // auto-advance 800ms later
+      await t.waitFor(/✓ Detected/, 60000);                   // ready state renders
+      // Verify the screen stays put — no auto-advance.
+      await t.sleep(1500);
+      const stayed = t.screen();
+      if (/Pick tasks/.test(stayed)) throw new Error('methodology auto-advanced without user input');
+      if (!/enter continue →/.test(stayed)) throw new Error('missing enter continue prompt');
+      // Enter advances.
+      t.reset();
+      t.sendKey('enter');
+      await t.waitFor(/Pick tasks/, 5000);
       t.send('q');
       await t.waitExit(3000);
     } finally { t.kill(); }

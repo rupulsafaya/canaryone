@@ -6,8 +6,6 @@ import { SCREEN_ACCENT } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 import { METHODOLOGY_MODEL, knownSdkList } from '../scan/methodology.js';
 
-const AUTO_ADVANCE_MS = 800;
-
 export function MethodologyCheck() {
   const goTo = useStore((s) => s.goTo);
   const status = useStore((s) => s.methodologyStatus);
@@ -24,12 +22,6 @@ export function MethodologyCheck() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (status !== 'ready') return;
-    const t = setTimeout(() => goTo('pickTasks'), AUTO_ADVANCE_MS);
-    return () => clearTimeout(t);
-  }, [status, goTo]);
-
   useInput((input, key) => {
     if (status === 'loading') {
       if (input === 'q' || key.escape) process.exit(0);
@@ -40,18 +32,19 @@ export function MethodologyCheck() {
       return;
     }
     if (status === 'error') {
-      if (input === 'r' || key.return) void load(true);
+      if (input === 'r') void load(true);
       else if (input === 'q' || key.escape) process.exit(1);
       return;
     }
-    // ready: enter advances immediately (short-cut the 800ms delay).
+    // ready: user reviews the verdict, then Enter advances.
     if (key.return) goTo('pickTasks');
+    else if (input === 'r') void load(true);   // manual re-scan
     else if (input === 'q' || key.escape) process.exit(0);
   });
 
   const subtitle =
     status === 'loading' ? `analyzing with ${METHODOLOGY_MODEL}…`
-      : status === 'ready' ? 'proxy will intercept ·advancing…'
+      : status === 'ready' ? 'proxy will intercept'
         : status === 'blocked' ? 'canaryone cannot intercept this codebase'
           : status === 'error' ? 'methodology scan failed'
             : ' ';
@@ -120,9 +113,19 @@ function ReadyView({ report }: { report: NonNullable<ReturnType<typeof useStore.
           <Box paddingLeft={2}><Text color="white">{report.evidence}</Text></Box>
         </Box>
       )}
-      <Box marginTop={1}>
-        <Text color="gray" dimColor>advancing to pick tasks…</Text>
-      </Box>
+      {report.followedFiles.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          <Text color="gray">Walked {report.followedFiles.length} file{report.followedFiles.length === 1 ? '' : 's'}:</Text>
+          <Box paddingLeft={2} flexDirection="column">
+            {report.followedFiles.slice(0, 6).map((f, i) => (
+              <Text key={i} color="gray" dimColor>· {f}</Text>
+            ))}
+            {report.followedFiles.length > 6 && (
+              <Text color="gray" dimColor>… +{report.followedFiles.length - 6} more</Text>
+            )}
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 }
@@ -202,19 +205,23 @@ function Footer({ status }: { status: string }) {
   if (status === 'ready') {
     return (
       <Text color="gray">
-        <Text color="#22c55e" bold>enter advance →</Text>
-        <Text color="gray"> (auto in {Math.round(AUTO_ADVANCE_MS / 100) / 10}s) · </Text>
-        <Text color="cyan">q</Text> quit
+        <Text color="#22c55e" bold>enter continue →</Text>
+        <Text color="gray"> · </Text>
+        <Text color="cyan">r</Text> re-scan · <Text color="cyan">q</Text> quit
       </Text>
     );
   }
   if (status === 'blocked') {
-    return <Text color="gray"><Text color="cyan">q</Text> quit (fix your code and rerun c1)</Text>;
+    return (
+      <Text color="gray">
+        <Text color="cyan">r</Text> re-scan (after fixing code) · <Text color="cyan">q</Text> quit
+      </Text>
+    );
   }
   if (status === 'error') {
     return (
       <Text color="gray">
-        <Text color="#eab308" bold>enter</Text>/<Text color="cyan">r</Text> retry · <Text color="cyan">q</Text> quit
+        <Text color="cyan">r</Text> retry · <Text color="cyan">q</Text> quit
       </Text>
     );
   }
