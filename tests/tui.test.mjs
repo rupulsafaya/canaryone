@@ -301,6 +301,26 @@ tests.push(['J. Confirm: renders with lanes, correct parallel wall-clock', async
   });
 }]);
 
+// --- Scenario M: nested-tests fixture auto-discovers via src/**/__tests__/ fallback ---
+tests.push(['M. Onboarding: nested tests under src/**/__tests__/ auto-discovered without user edit', async () => {
+  const target = path.join(FIXTURES_DIR, 'nested-tests-repo');
+  await withScratchDir(async (scratchDir) => {
+    const t = spawnTui(['--start', 'onboarding', '--config-dir', scratchDir, '--target', target], { clearAuth: false });
+    try {
+      await t.waitFor('scan complete', 10000);
+      // Nested fallback picks up src/lib/__tests__/agent.test.js — Found row
+      // should show 1 test file WITHOUT the user needing to edit the glob.
+      await t.waitFor(/1 test files?/, 5000);
+      // Glob row should show the nested pattern, not "(none)".
+      const screen = t.screen();
+      if (/\(none\)/.test(screen)) throw new Error('nested glob not populated');
+      if (!/__tests__/.test(screen)) throw new Error('expected __tests__ pattern in glob');
+      t.send('q');
+      await t.waitExit(3000);
+    } finally { t.kill(); }
+  });
+}]);
+
 // --- Scenario K: MethodologyCheck ready state on sdk-env fixture; Enter advances ---
 tests.push(['K. MethodologyCheck: sdk-env fixture renders verdict; Enter advances to PickTasks', async () => {
   const target = path.join(FIXTURES_DIR, 'sdk-env-repo');

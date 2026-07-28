@@ -92,6 +92,10 @@ export const ScanSchema = z.object({
   runners: z.array(RunnerCandidateSchema),
   probedDirs: z.array(ProbedDirSchema),
   frameworkHints: z.array(z.string()),
+  // Persisted so cache-hit re-runs can restore the previously-computed glob
+  // (including nested-fallback patterns like `src/**/__tests__/**/*.test.ts`).
+  // Optional for backwards-compat with pre-existing caches.
+  suggestedGlob: z.string().nullable().optional(),
 });
 export type Scan = z.infer<typeof ScanSchema>;
 

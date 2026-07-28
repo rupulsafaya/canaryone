@@ -41,7 +41,10 @@ export async function runFirstRunScan(opts: RunFirstRunScanOpts): Promise<FirstR
       runners: cachedScan.runners,
       probedDirs: cachedScan.probedDirs,
       frameworkHints: cachedScan.frameworkHints,
-      suggestedGlob: firstNonEmptyDir(cachedScan.probedDirs),
+      // Prefer the cached, previously-computed suggestion (includes nested
+      // fallbacks). Fall back to recomputing from shallow probed dirs for
+      // pre-existing caches that predate the field.
+      suggestedGlob: cachedScan.suggestedGlob ?? firstNonEmptyDir(cachedScan.probedDirs),
     };
   } else {
     scan = await scanDeterministic(targetDir);
@@ -85,6 +88,7 @@ async function writeScanCache(
     runners: scan.runners,
     probedDirs: scan.probedDirs,
     frameworkHints: scan.frameworkHints,
+    suggestedGlob: scan.suggestedGlob,
   };
   await fs.writeFile(path.join(configDir, 'scan.json'), JSON.stringify(payload, null, 2));
 }

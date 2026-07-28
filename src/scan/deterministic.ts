@@ -23,6 +23,32 @@ const TEST_DIR_CANDIDATES = [
   '__tests__',
 ];
 
+// Fallback patterns tried when no shallow candidate has files. Ordered from
+// most-scoped to least-scoped — the first pattern with matches wins.
+// Common in Next.js / monorepo layouts where tests live next to source.
+const NESTED_TEST_PATTERNS = [
+  'src/**/__tests__/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}',
+  'packages/*/src/**/__tests__/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}',
+  'packages/*/{tests,test,__tests__}/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}',
+  'apps/*/{tests,test,__tests__}/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}',
+  'src/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}',
+  '**/*.{test,spec}.{ts,tsx,js,mjs,cjs,py}',
+];
+
+// Directories we never want to search in for tests, regardless of pattern.
+const TEST_SEARCH_IGNORE = [
+  '**/node_modules/**',
+  '**/.git/**',
+  '**/dist/**',
+  '**/build/**',
+  '**/.next/**',
+  '**/.venv/**',
+  '**/coverage/**',
+  '**/.turbo/**',
+  '**/out/**',
+  '**/.cache/**',
+];
+
 const FRAMEWORK_FINGERPRINTS = [
   '.opencode',
   'next.config.ts',
@@ -63,9 +89,26 @@ export async function scanDeterministic(targetDir: string): Promise<Deterministi
   }
 
   const firstNonEmpty = probedDirs.find((d) => d.exists && d.fileCount > 0);
-  const suggestedGlob = firstNonEmpty ? expandGlob(firstNonEmpty.path) : null;
+  let suggestedGlob = firstNonEmpty ? expandGlob(firstNonEmpty.path) : null;
+  // If shallow probing missed (common in Next.js repos with src/**/__tests__/
+  // or monorepos), try nested patterns and take the first with matches.
+  if (!suggestedGlob) suggestedGlob = await probeNestedTestGlobs(targetDir);
 
   return { runners, probedDirs, frameworkHints, suggestedGlob };
+}
+
+async function probeNestedTestGlobs(targetDir: string): Promise<string | null> {
+  for (const pattern of NESTED_TEST_PATTERNS) {
+    const hits = await fg(pattern, {
+      cwd: targetDir,
+      onlyFiles: true,
+      dot: false,
+      suppressErrors: true,
+      ignore: TEST_SEARCH_IGNORE,
+    });
+    if (hits.length > 0) return pattern;
+  }
+  return null;
 }
 
 async function readPackageScripts(targetDir: string): Promise<RunnerCandidate[]> {

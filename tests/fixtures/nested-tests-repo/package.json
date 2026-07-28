@@ -1,0 +1,9 @@
+{
+  "name": "c1-fixture-nested-tests-repo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  }
+}
