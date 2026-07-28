@@ -336,7 +336,18 @@ Ported from parent SPEC §11 + hosted `scripts/judge_v1.ts`:
 
 ## 15. Storage (iter2)
 
-Two-layer storage: an **append-only wire log** on disk (the tape) and a **queryable SQLite index** (built from the tape). SQLite serves reports and resume-decisions; the wire log survives SQLite corruption, is human-readable, and enables crash-resume in the case a session dies mid-request.
+Two-layer storage with a clear split of responsibility:
+
+| Layer | Path | Role | Source of truth for |
+|---|---|---|---|
+| **Wire log (JSONL)** | `<repo>/.c1/runs/<run_id>/traffic.jsonl` | append-only tape, one JSON object per intercepted request/response/chunk/error | The raw wire — what actually happened between subprocess and destination. If SQLite is toast, this rebuilds it. Human-readable-ish. |
+| **SQLite index** | `<repo>/.c1/db.sqlite` | queryable, transactional | Aggregate state — "did session X complete?", "what was the judge verdict?", "cost per lane". Everything the TUI queries. |
+
+**Write order (crash safety):**
+
+1. Every wire event is fsync'd to `traffic.jsonl` BEFORE the corresponding SQLite row is committed. If the process dies between the JSONL write and the SQLite commit, `c1 run --continue` will replay the tail of `traffic.jsonl` into SQLite before resuming.
+2. Session-terminal events (completion, failure, judge verdict) are committed to SQLite in a single transaction so partial state is impossible from a crash mid-commit.
+3. The judge worker reads SQLite for session state, reads `traffic.jsonl` byte range (`steps.traffic_log_offset` → `steps.traffic_log_length`) for full request/response bodies when needed.
 
 ### 15.1 SQLite index
 
@@ -418,23 +429,99 @@ Per run:
 - `traffic.md` regenerable anytime from `.jsonl`.
 - Iter3 will add a `c1 runs prune --older-than=30d` command. Iter2 leaves everything.
 
-## 16. LiveProgress wiring
+## 16. TUI runner controls
 
-The existing LiveProgress screen (iter0 mock) already displays cells. Iter2 replaces its `tick()` fixture-driven state machine with real events streamed from the runner:
+### 16.1 LiveProgress — during-run controls
 
-- **queued** → **running** the moment the subprocess spawn resolves
-- **running** → cell shows live cost + elapsed as usage streams in
-- **pass** / **fail** / **error** when the session terminates AND judge concludes
+The iter0 LiveProgress screen already renders (lane × task) cells. Iter2 replaces its fixture `tick()` with real events streamed from the runner's event bus (in-process pub/sub; runner emits, LiveProgress subscribes):
 
-On completion, LiveProgress fires the existing `writeReport()` path to emit `.c1/reports/<ts>/index.html` (existing iter0 stub — flesh out in iter3, iter2 just writes the raw json + summary.md).
+- **queued** → **running** the moment the subprocess spawn resolves (fires from `runner/subprocess.ts`)
+- **running** → cell displays live token count + cost + elapsed as `steps` rows commit
+- **pass / fail / error** when the session terminates AND the judge verdict lands in `classifier_tags`
+
+Keyboard controls while the run is executing:
+
+| Key | Action | Semantics |
+|---|---|---|
+| `p` | pause queue | in-flight sessions finish; no new sessions dispatched. State persists — resume with `p` again or `r`. |
+| `r` | resume | opposite of pause. |
+| `k` | kill focused cell | SIGKILL that specific (task × lane × repeat)'s subprocess; marks `failure_class = user_killed`. Sibling sessions unaffected. |
+| `K` (shift-k) | kill lane | drops all pending sessions for the focused lane; in-flight ones for that lane get SIGKILL'd; other lanes continue. |
+| `x` | abort run | SIGKILL every subprocess, mark run `status = aborted`, close proxy sockets, exit run loop. TUI stays open so user can review what completed. |
+| `c` | raise cost cap | opens the inline cap editor (same pattern as Confirm.tsx). Applies to sessions dispatched after commit. |
+| `↑↓` | move focus between cells | cell borders highlight; details panel updates |
+| `d` | drill into focused cell | opens the SessionInspector (§16.2) live-tailed at the last step of that session. Continues to update as the session progresses. |
+| `enter` | after run terminates | opens the RunBrowser (§16.3) rooted at this run |
+| `q` | quit c1 | prompts confirm if a run is in-flight (pauses first) |
+
+**Signal safety:** all subprocess kills flow through a single central handler that also removes the git worktree. LiveProgress never forks. If the c1 process itself gets SIGINT/SIGTERM, the same central handler runs (best-effort cleanup, no zombie subprocesses).
+
+### 16.2 SessionInspector — drill into a session
+
+**New screen.** Opens via `d` from LiveProgress, or from RunBrowser. Rows:
+
+- Header: session_id, task, lane (model + destination), status, cost, elapsed, judge verdict (if landed)
+- Step timeline: `step_ix` · `finish_reason` · latency · cost · tool_calls count. Scrollable.
+- Selected step detail pane: full request body (collapsed by default), full response body, `translation_notes` if the Anthropic translator dropped anything. Reads from `traffic.jsonl` via the byte-range recorded in `steps.traffic_log_offset` — instant even for huge sessions.
+
+Live-tail behavior: if the session is still running when the user opens the inspector, new steps append to the timeline as they commit; the detail pane sticks to whichever step the user selected (doesn't chase the cursor).
+
+Keyboard:
+
+| Key | Action |
+|---|---|
+| `↑↓` | move step selection |
+| `enter` | expand the selected step's request+response bodies inline |
+| `j` | jump to the judge's classifier_tags for this session (if landed) |
+| `t` | filter timeline to tool-call steps only |
+| `b` | back to whichever screen called us (LiveProgress or RunBrowser) |
+| `q` | quit c1 |
+
+### 16.3 RunBrowser — post-run navigation
+
+**New screen.** Two entry points: `c1 runs` (subcommand, direct browse), or auto-opens when a LiveProgress run terminates.
+
+- Left pane: list of runs from `<repo>/.c1/runs/` sorted by `started_at` desc. Each row: run_id short-hash, started_at, status, sessions completed/total, total spend.
+- Right pane (when a run is focused): summary — lane matrix with per-lane pass/fail/cost/latency-p50 numbers. Row per lane, col per task.
+- `enter` on a lane × task cell → SessionInspector rooted at that session (or the first repeat).
+
+Keyboard:
+
+| Key | Action |
+|---|---|
+| `↑↓` | select run (left pane) |
+| `→` / `l` | move focus into the lane matrix |
+| `←` / `h` | back to run list |
+| `enter` | on a matrix cell → SessionInspector; on a run row → focus the matrix |
+| `/` | filter run list by run_id / date substring |
+| `q` | quit c1 |
+
+### 16.4 Reports — deferred to a separate SPEC
+
+Aggregate reporting (heatmap PNG, HTML index, cost-per-outcome roll-ups, shareable exports, cross-run comparison) is **out of iter2 scope**. Iter2 produces:
+
+- The wire log at `<repo>/.c1/runs/<run_id>/traffic.jsonl` (source of truth)
+- The SQLite index at `<repo>/.c1/db.sqlite`
+- Per-session Markdown at `<repo>/.c1/runs/<run_id>/sessions/<session_id>.md` (regenerable from the JSONL; useful for grep + PR-attach)
+- The RunBrowser TUI (§16.3) as the in-tool navigation surface
+
+A separate SPEC (`c1-report-<date>-SPEC.md`) will design:
+- The money-shot cost-per-outcome heatmap (rows = lanes, cols = tasks, cells = `$/pass`)
+- HTML index at `<repo>/.c1/reports/<run_id>/index.html`
+- `summary.md` markdown table format
+- `heatmap.png` for Slack/PR embed
+- Cross-run trend view (v0.1)
+
+That SPEC will consume iter2's SQLite + JSONL as inputs — no changes to iter2's storage layer.
 
 ## 17. CLI additions (Part B)
 
 - `c1 run` — new subcommand. Enters runner mode instead of the TUI. Requires prior `c1` walkthrough (KeySetup → Onboarding → Summarize → MethodologyCheck → PickTasks → PickModels → PickDestinations → Confirm) to populate config. Config gets locked into `.c1/runs/<run_id>/meta.json` at invocation time.
 - `c1 run --continue <run_id>` — resume an interrupted run using the meta + traffic log at `.c1/runs/<run_id>/`. See §15.3.
-- `c1 runs list` — list all `<repo>/.c1/runs/*` with status (complete / partial / aborted), start time, session counts.
-- `c1 runs show <run_id>` — regenerate + print `.c1/runs/<run_id>/traffic.md` from `traffic.jsonl`. Pass `--session <session_id>` to filter.
-- `c1 runs prune` — **deferred to iter3.**
+- `c1 runs` (no args) — opens the RunBrowser TUI (§16.3). Interactive browse + drill into SessionInspector.
+- `c1 runs list` — non-interactive: print all `<repo>/.c1/runs/*` with status (complete / partial / aborted), start time, session counts.
+- `c1 runs show <run_id>` — non-interactive: regenerate + print `.c1/runs/<run_id>/traffic.md` from `traffic.jsonl`. Pass `--session <session_id>` to filter.
+- `c1 runs prune` — **deferred to report SPEC.**
 - Existing `c1` (no subcommand) stays the TUI entry — walks through Config screens as today. `Confirm.startRun` shells to `c1 run` behind the scenes.
 
 ## 18. Files to create/modify (Part B)
@@ -450,8 +537,11 @@ On completion, LiveProgress fires the existing `writeReport()` path to emit `.c1
 - `src/judge/haiku-r5.ts` **new** — prompt + call + validation.
 - `src/judge/prompt-haiku-r5.md` **new** — prompt text (checked in for reproducibility).
 - `src/db/sqlite.ts` **new** — schema, migrations, insert/query helpers.
-- `src/screens/LiveProgress.tsx` — replace tick fixture with real event stream from the runner.
-- `src/cli.tsx` — `c1 run` + `c1 runs list|show` subcommand plumbing.
+- `src/screens/LiveProgress.tsx` — replace tick fixture with real event stream from the runner + all §16.1 during-run controls.
+- `src/screens/SessionInspector.tsx` **new** — §16.2 drill-in screen; reads SQLite + `traffic.jsonl` byte ranges.
+- `src/screens/RunBrowser.tsx` **new** — §16.3 post-run navigation, list runs + lane matrix + drill-to-inspector.
+- `src/runner/event-bus.ts` **new** — in-process pub/sub between runner and TUI screens (session state transitions, step commits, judge verdicts).
+- `src/cli.tsx` — `c1 run` + `c1 runs` (interactive browser) + `c1 runs list|show` subcommand plumbing.
 - `src/state/store.ts` — real cell state driven by runner events (not the current mock tick).
 - `package.json` — bump `engines.node` to `>=22`.
 
@@ -473,10 +563,14 @@ Estimated cost: ~$0.30 destination + ~$0.09 judge ≈ **$0.40**.
 Success signals:
 - 18 rows in `sessions`, ~150 rows in `steps` (varies with agent trajectory length)
 - LiveProgress cells all reach a terminal state (pass/fail/error) within 20 minutes wall-clock at parallelism=3
-- `<repo>/.c1/runs/<run_id>/traffic.jsonl` populated; `c1 runs show <id>` renders a coherent narrative
-- `<repo>/.c1/runs/<run_id>/report/summary.md` written
+- `<repo>/.c1/runs/<run_id>/traffic.jsonl` populated with per-turn bodies (§15.2 requirement)
+- `c1 runs show <id>` regenerates a readable Markdown mirror
+- SessionInspector opens on any completed session and renders the full step timeline from the JSONL byte ranges
 - Non-zero pass rate on at least one lane (validates end-to-end)
 - **Resume validation** — kill mid-run after ≥1 session completes, `c1 run --continue <id>` finishes the remaining sessions without re-running the complete ones. Final `traffic.jsonl` has a `resume-marker` divider row.
+- **Controls validation** — during a run, `k` on a focused cell kills that session only (siblings continue); `x` cleanly aborts the whole run; `d` opens SessionInspector with a live-tailing timeline.
+
+**Explicitly out of scope for iter2 exit:** heatmap PNG, HTML report, aggregate cost-per-outcome tables. Those land in the report SPEC (§16.4).
 
 ## 20. Pty test scenarios added
 
@@ -486,6 +580,9 @@ Success signals:
 - `N` — proxy lane serves `/v1/messages` (Anthropic native), translator emits valid OpenAI-shape upstream, returns valid Anthropic-shape downstream
 - `O` — end-to-end `c1 run` in a synthetic 1-task fixture, populates `db.sqlite` AND `traffic.jsonl`, terminates cleanly
 - `P` — resume path: kill `c1 run` mid-flight after 1 session completes, `c1 run --continue <id>` skips completed, reruns aborted, final state matches un-killed baseline
+- `Q` — LiveProgress controls: `p` pauses queue (no new spawns), `r` resumes, `k` on focused cell kills that session only, `x` aborts run cleanly
+- `R` — SessionInspector: `d` from LiveProgress opens inspector; step timeline populates; `enter` on a step expands request/response body; `b` returns
+- `S` — RunBrowser: `c1 runs` opens the browser; select a run; lane matrix renders; `enter` on a cell drills into SessionInspector
 
 ---
 
@@ -495,8 +592,9 @@ After iter2 ships:
 
 - **Parent SPEC** — update §14 destination table to reflect real iter1 endpoints (via OR only for iter2; direct providers still iter5).
 - **iter1 SPEC** — mark `LiveProgress still fixture-driven` note as resolved.
-- **Parent SPEC §16** — mark iter1 done, iter2 done, update iter3 target (HTML report, cost pre-flight against real baselines, telemetry).
+- **Parent SPEC §16** — mark iter1 done, iter2 done, update iter3 target.
 - **This SPEC** — add amendment(s) for any decisions discovered during build.
+- **New SPEC needed:** `c1-report-<date>-SPEC.md` for aggregate reporting (§16.4). Reads iter2's `db.sqlite` + `traffic.jsonl`. Owner: TBD, immediately after iter2 exit-criterion passes.
 
 ## 22. Provenance
 
