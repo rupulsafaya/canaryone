@@ -20,3 +20,18 @@ export async function echo(prompt) {
   });
   return res.choices?.[0]?.message?.content ?? '';
 }
+
+// Two-turn: ask a factual question, then a follow-up. Exercises a slightly
+// heavier prompt so the two-task display shows different token counts /
+// $/pass across lanes.
+export async function factCheck(claim) {
+  const res = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
+    max_tokens: 512,
+    messages: [
+      { role: 'system', content: 'You are a terse fact-checker. Reply with YES or NO on the first line, then one sentence of reasoning.' },
+      { role: 'user', content: `Claim: ${claim}` },
+    ],
+  });
+  return res.choices?.[0]?.message?.content ?? '';
+}
