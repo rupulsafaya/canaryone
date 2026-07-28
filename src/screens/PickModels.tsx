@@ -1,20 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useStore } from '../state/store.js';
-import { TOP_MODELS, OTHER_MODELS, ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK } from '../data/fixtures.js';
+import { TOP_MODELS, OTHER_MODELS, ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, getHosts } from '../data/fixtures.js';
 import { SCREEN_ACCENT, familyColor, changeColor } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 
-const PRESETS: { key: string; label: string; slugs: string[] }[] = [
-  { key: '1', label: 'Cheap coding fleet',      slugs: ['deepseek/deepseek-v4-flash', 'z-ai/glm-5.2', 'qwen/qwen-3-coder'] },
-  { key: '2', label: 'Frontier comparison',     slugs: ['anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'openai/gpt-5', 'google/gemini-3-flash'] },
-  { key: '3', label: 'Free-tier only',          slugs: ALL_MODELS.filter((m) => m.isFree).map((m) => m.slug) },
-];
-
 export function PickModels() {
   const selectedModels = useStore((s) => s.selectedModels);
+  const selectedHosts = useStore((s) => s.selectedHosts);
   const toggleModel = useStore((s) => s.toggleModel);
-  const setPreset = useStore((s) => s.setPreset);
   const tasks = useStore((s) => s.tasks);
   const repeats = useStore((s) => s.repeats);
   const goTo = useStore((s) => s.goTo);
@@ -22,9 +16,6 @@ export function PickModels() {
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
 
-  // Row assembly:
-  //   Query empty:   header "Most used" → top 20 → footer hint "15 more · press / to search"
-  //   Query active:  header "Search: <q>" → all matching from ALL_MODELS
   type Row = { kind: 'header'; label: string } | { kind: 'model'; model: (typeof TOP_MODELS)[0] } | { kind: 'hint'; label: string };
   const rows: Row[] = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -55,73 +46,71 @@ export function PickModels() {
     else if (key.downArrow) setCursor((c) => Math.min(Math.max(0, modelRows.length - 1), c + 1));
     else if (input === ' ' && modelRows[cursor]) toggleModel(modelRows[cursor].model.slug);
     else if (input === '/') setSearching(true);
-    else if (input === '1' || input === '2' || input === '3') {
-      const preset = PRESETS.find((p) => p.key === input);
-      if (preset) setPreset(preset.slugs);
-    }
-    else if (key.return) goTo('confirm');
+    else if (key.return) goTo('pickHosts');
     else if (input === 'b' || key.escape) goTo('pickTasks');
   });
 
   const includedTasks = tasks.filter((t) => t.included);
+  const totalLanes = useMemo(() => {
+    let n = 0;
+    for (const m of selectedModels) n += (selectedHosts[m]?.size ?? 0);
+    return n;
+  }, [selectedModels, selectedHosts]);
+
   const estCost = useMemo(() => {
     let total = 0;
     for (const slug of selectedModels) {
-      const m = ALL_MODELS.find((x) => x.slug === slug);
-      if (!m) continue;
-      const perRun = (BASELINE_INPUT_TOKENS / 1_000_000) * m.inputPrice + (BASELINE_OUTPUT_TOKENS / 1_000_000) * m.outputPrice;
-      total += perRun * includedTasks.length * repeats;
+      const hosts = selectedHosts[slug] ?? new Set<string>();
+      for (const hostSlug of hosts) {
+        const h = getHosts(slug).find((x) => x.slug === hostSlug);
+        const inP = h?.inputPrice ?? ALL_MODELS.find((m) => m.slug === slug)?.inputPrice ?? 0;
+        const outP = h?.outputPrice ?? ALL_MODELS.find((m) => m.slug === slug)?.outputPrice ?? 0;
+        total += ((BASELINE_INPUT_TOKENS / 1_000_000) * inP + (BASELINE_OUTPUT_TOKENS / 1_000_000) * outP) * includedTasks.length * repeats;
+      }
     }
-    total += JUDGE_COST_PER_TASK * includedTasks.length * selectedModels.size * repeats;
+    total += JUDGE_COST_PER_TASK * includedTasks.length * totalLanes * repeats;
     return total;
-  }, [selectedModels, includedTasks.length, repeats]);
-
-  const showTable = modelRows.length > 0;
+  }, [selectedModels, selectedHosts, includedTasks.length, repeats, totalLanes]);
 
   return (
     <Frame
-      title="my-agent-repo · Pick models"
+      title="Pick models"
       accent={SCREEN_ACCENT.pickModels}
-      subtitle={`${selectedModels.size} selected · ${includedTasks.length} tasks × ${repeats} repeats ≈ $${estCost.toFixed(2)}`}
+      subtitle={`${selectedModels.size} models · ${totalLanes} lanes · ${includedTasks.length} tasks × ${repeats} rpts ≈ $${estCost.toFixed(2)}`}
       footer={
         <Box flexDirection="column">
           <Text color="gray">
-            <Text color="cyan">↑↓</Text> nav · <Text color="cyan">space</Text> toggle · <Text color="cyan">/</Text> search · <Text color="cyan">1</Text> cheap · <Text color="cyan">2</Text> frontier · <Text color="cyan">3</Text> free · <Text color="cyan">enter</Text> next → · <Text color="cyan">b</Text> back
+            <Text color="cyan">↑↓</Text> nav · <Text color="cyan">space</Text> toggle · <Text color="cyan">/</Text> search · <Text color="cyan">enter</Text> pick hosts → · <Text color="cyan">b</Text> back
           </Text>
           {searching && <Text color="cyan">Search: <Text color="white" bold>{query}</Text><Text color="gray">▏</Text><Text color="gray"> · enter/esc close</Text></Text>}
         </Box>
       }
     >
-      {/* Column headers */}
-      {showTable && (
-        <>
-          <Box>
-            <Box width={4}><Text color="magenta" bold>   </Text></Box>
-            <Box width={4}><Text color="magenta" bold>#</Text></Box>
-            <Box width={22}><Text color="magenta" bold>Model</Text></Box>
-            <Box width={10}><Text color="magenta" bold>Δ 24h</Text></Box>
-            <Box width={12}><Text color="magenta" bold>Tokens/day</Text></Box>
-            <Box width={16}><Text color="magenta" bold>$/M in · out</Text></Box>
-            <Box width={9}><Text color="magenta" bold>Ctx</Text></Box>
-            <Text color="magenta" bold>Free</Text>
-          </Box>
-          <Box><Text color="gray" dimColor>{'─'.repeat(90)}</Text></Box>
-        </>
-      )}
+      <Box flexShrink={0}>
+        <Box width={4}><Text color="magenta" bold>   </Text></Box>
+        <Box width={4}><Text color="magenta" bold>#</Text></Box>
+        <Box width={22}><Text color="magenta" bold>Model</Text></Box>
+        <Box width={10}><Text color="magenta" bold>Δ 24h</Text></Box>
+        <Box width={12}><Text color="magenta" bold>Tokens/day</Text></Box>
+        <Box width={16}><Text color="magenta" bold>$/M in · out</Text></Box>
+        <Box width={9}><Text color="magenta" bold>Ctx</Text></Box>
+        <Text color="magenta" bold>Free</Text>
+      </Box>
+      <Box flexShrink={0}><Text color="gray" dimColor>{'─'.repeat(95)}</Text></Box>
 
       {(() => {
         let modelIdx = -1;
         return rows.map((row, i) => {
           if (row.kind === 'header') {
             return (
-              <Box key={`h${i}`} marginTop={i === 0 ? 0 : 1}>
+              <Box key={`h${i}`} marginTop={i === 0 ? 0 : 1} flexShrink={0}>
                 <Text color="cyan" bold>▸ {row.label}</Text>
               </Box>
             );
           }
           if (row.kind === 'hint') {
             return (
-              <Box key={`hint${i}`} marginTop={1}>
+              <Box key={`hint${i}`} marginTop={1} flexShrink={0}>
                 <Text color="gray" dimColor>… {row.label}</Text>
               </Box>
             );
@@ -133,7 +122,7 @@ export function PickModels() {
           const rankStr = m.rankPosition ? String(m.rankPosition).padStart(2, ' ') : '  ';
           const tokensStr = m.totalTokens ? formatTokens(m.totalTokens).padStart(9) : '        —';
           return (
-            <Box key={m.slug}>
+            <Box key={m.slug} flexShrink={0}>
               <Box width={4}>
                 {active ? <Text color="cyan" bold>▸ </Text> : <Text>  </Text>}
                 <Text color={selectedModels.has(m.slug) ? '#22c55e' : '#64748b'}>{check}</Text>
@@ -159,7 +148,6 @@ function formatTokens(n: number) {
   if (n >= 1e6) return (n / 1e6).toFixed(0) + 'M';
   return String(n);
 }
-
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
 }

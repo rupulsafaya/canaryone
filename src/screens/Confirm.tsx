@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useStore } from '../state/store.js';
-import { ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS } from '../data/fixtures.js';
+import { ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS, getHosts } from '../data/fixtures.js';
 import { SCREEN_ACCENT, familyColor } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 
 export function Confirm() {
   const tasks = useStore((s) => s.tasks);
   const selectedModels = useStore((s) => s.selectedModels);
+  const selectedHosts = useStore((s) => s.selectedHosts);
   const repeats = useStore((s) => s.repeats);
   const parallelism = useStore((s) => s.parallelism);
   const maxSpend = useStore((s) => s.maxSpend);
@@ -33,27 +34,36 @@ export function Confirm() {
     if (key.return) startRun();
     else if (input === 't') goTo('pickTasks');
     else if (input === 'm') goTo('pickModels');
+    else if (input === 'h') goTo('pickHosts');
     else if (input === 'c') { setCapDraft(maxSpend.toFixed(2)); setEditingCap(true); }
     else if (input === 'q' || key.escape) process.exit(0);
   });
 
   const includedTasks = tasks.filter((t) => t.included);
-  const modelObjs = Array.from(selectedModels).map((s) => ALL_MODELS.find((m) => m.slug === s)!).filter(Boolean);
-  const totalRuns = includedTasks.length * modelObjs.length * repeats;
+  const lanes: { model: string; host: string; inputPrice: number; outputPrice: number }[] = [];
+  for (const model of selectedModels) {
+    const hosts = selectedHosts[model] ?? new Set<string>();
+    for (const hostSlug of hosts) {
+      const h = getHosts(model).find((x) => x.slug === hostSlug);
+      if (!h) continue;
+      lanes.push({ model, host: hostSlug, inputPrice: h.inputPrice, outputPrice: h.outputPrice });
+    }
+  }
+  const totalRuns = includedTasks.length * lanes.length * repeats;
   const seqSec = totalRuns * P50_RUN_SECONDS;
-  const parSec = Math.max(P50_RUN_SECONDS, seqSec / Math.min(parallelism, modelObjs.length || 1));
+  const parSec = Math.max(P50_RUN_SECONDS, seqSec / Math.min(parallelism, lanes.length || 1));
 
   let destCost = 0;
-  for (const m of modelObjs) {
-    destCost += ((BASELINE_INPUT_TOKENS / 1_000_000) * m.inputPrice + (BASELINE_OUTPUT_TOKENS / 1_000_000) * m.outputPrice) * includedTasks.length * repeats;
+  for (const l of lanes) {
+    destCost += ((BASELINE_INPUT_TOKENS / 1_000_000) * l.inputPrice + (BASELINE_OUTPUT_TOKENS / 1_000_000) * l.outputPrice) * includedTasks.length * repeats;
   }
-  const judgeCost = JUDGE_COST_PER_TASK * includedTasks.length * modelObjs.length * repeats;
+  const judgeCost = JUDGE_COST_PER_TASK * includedTasks.length * lanes.length * repeats;
   const totalCost = destCost + judgeCost;
   const overCap = totalCost > maxSpend;
 
   return (
     <Frame
-      title="my-agent-repo · Confirm & run"
+      title="Confirm & run"
       accent={SCREEN_ACCENT.confirm}
       footer={
         editingCap ? (
@@ -62,22 +72,30 @@ export function Confirm() {
           </Text>
         ) : (
           <Text color="gray">
-            <Text color={overCap ? 'gray' : '#22c55e'} bold={!overCap}>{overCap ? 'enter' : 'enter'}</Text>
-            {overCap ? <Text color="gray"> (blocked, over cap)</Text> : <Text color="#22c55e" bold> RUN</Text>}
-            <Text color="gray"> · </Text><Text color="cyan">c</Text> change cap · <Text color="cyan">t</Text> change tasks · <Text color="cyan">m</Text> change models · <Text color="cyan">q</Text> quit
+            {overCap
+              ? <Text color="gray">enter <Text dimColor>(blocked, over cap)</Text></Text>
+              : <Text color="#22c55e" bold>enter RUN</Text>}
+            <Text color="gray"> · </Text><Text color="cyan">c</Text> cap · <Text color="cyan">t</Text> tasks · <Text color="cyan">m</Text> models · <Text color="cyan">h</Text> hosts · <Text color="cyan">q</Text> quit
           </Text>
         )
       }
     >
       <Section title="Scope">
         <Text>
-          <Text color="white" bold>{includedTasks.length}</Text> tasks × <Text color="white" bold>{modelObjs.length}</Text> models × <Text color="white" bold>1</Text> provider (OR) × <Text color="white" bold>{repeats}</Text> repeats = <Text color="cyan" bold>{totalRuns} runs</Text>
+          <Text color="white" bold>{includedTasks.length}</Text> tasks × <Text color="white" bold>{lanes.length}</Text> lanes (model,host) × <Text color="white" bold>{repeats}</Text> repeats = <Text color="cyan" bold>{totalRuns} runs</Text>
         </Text>
         <Box marginTop={1} flexDirection="column">
-          <Text color="gray" dimColor>models:</Text>
-          {modelObjs.map((m) => (
-            <Text key={m.slug}>  <Text color={familyColor(m.family)}>●</Text> {m.displayName} <Text color="gray">· ${m.inputPrice.toFixed(2)}/${m.outputPrice.toFixed(2)} per 1M</Text></Text>
-          ))}
+          <Text color="gray" dimColor>lanes:</Text>
+          {lanes.slice(0, 8).map((l) => {
+            const m = ALL_MODELS.find((x) => x.slug === l.model);
+            if (!m) return null;
+            return (
+              <Text key={`${l.model}::${l.host}`}>
+                {'  '}<Text color={familyColor(m.family)}>●</Text> <Text color="white">{m.displayName}</Text> <Text color="gray">·</Text> <Text color="magenta">{l.host}</Text> <Text color="gray">· ${l.inputPrice.toFixed(2)}/${l.outputPrice.toFixed(2)}/M</Text>
+              </Text>
+            );
+          })}
+          {lanes.length > 8 && <Text color="gray" dimColor>{'  '}+ {lanes.length - 8} more lanes</Text>}
         </Box>
       </Section>
 
@@ -86,9 +104,9 @@ export function Confirm() {
       </Section>
 
       <Section title="Cost">
-        <KV label="Destination LLM (OR list × baseline tokens)" value={`~ $${destCost.toFixed(2)}`} />
+        <KV label="Destination LLM (per-host prices × baseline tokens)" value={`~ $${destCost.toFixed(2)}`} />
         <KV label={`Judge model ($${JUDGE_COST_PER_TASK.toFixed(3)} × ${totalRuns} tasks judged)`} value={`~ $${judgeCost.toFixed(2)}`} />
-        <Box marginTop={0}><Text color="gray">  ─────────────────────────────────────────────────────</Text></Box>
+        <Box><Text color="gray">  ─────────────────────────────────────────────────────</Text></Box>
         <KV label="Total estimated" value={`~ $${totalCost.toFixed(2)}`} highlight color={overCap ? '#ef4444' : '#22c55e'} />
         <Box marginTop={1} flexDirection="column">
           <Text color="gray">
@@ -96,7 +114,7 @@ export function Confirm() {
           </Text>
           {overCap && (
             <Text color="#ef4444" bold>
-              ⚠ OVER CAP by ${(totalCost - maxSpend).toFixed(2)} · press <Text color="cyan">c</Text> to raise cap, or <Text color="cyan">t</Text>/<Text color="cyan">m</Text> to trim selection
+              ⚠ OVER CAP by ${(totalCost - maxSpend).toFixed(2)} · press <Text color="cyan">c</Text> to raise cap, or <Text color="cyan">t</Text>/<Text color="cyan">m</Text>/<Text color="cyan">h</Text> to trim selection
             </Text>
           )}
         </Box>
@@ -107,7 +125,7 @@ export function Confirm() {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column" marginBottom={1} flexShrink={0}>
       <Text color="magenta" bold>{title}</Text>
       <Box paddingLeft={2} flexDirection="column">{children}</Box>
     </Box>

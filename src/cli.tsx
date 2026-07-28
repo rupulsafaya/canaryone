@@ -11,7 +11,7 @@ const cli = meow(
     $ canaryone [flags]
 
   Flags
-    --start <screen>   jump straight to a screen (onboarding|pickTasks|pickModels|confirm|liveProgress|report)
+    --start <screen>   jump straight to a screen (onboarding|pickTasks|taskDetail|pickModels|pickHosts|confirm|liveProgress)
     --help
   `,
   {
@@ -23,7 +23,7 @@ const cli = meow(
 );
 
 if (cli.flags.start) {
-  const valid = ['onboarding', 'pickTasks', 'pickModels', 'confirm', 'liveProgress', 'report'] as const;
+  const valid = ['onboarding', 'pickTasks', 'taskDetail', 'pickModels', 'pickHosts', 'confirm', 'liveProgress'] as const;
   if (valid.includes(cli.flags.start as any)) {
     if (cli.flags.start === 'liveProgress') {
       useStore.getState().startRun();

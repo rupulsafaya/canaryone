@@ -27,6 +27,14 @@ export type Model = {
 export type CellState = 'queued' | 'running' | 'passed' | 'failed' | 'error';
 export type Cell = { state: CellState; costUsd: number; latencyMs: number };
 
+export type Host = {
+  slug: string;              // e.g. "baseten/fp8"
+  displayName: string;
+  inputPrice: number;        // $/M — may differ from model default
+  outputPrice: number;
+  isFirstParty?: boolean;
+};
+
 export const TASKS: Task[] = [
   { id: 't01', file: 'tests/agent/auth.spec.ts',      name: 'fix expired-token refresh flow',              summary: 'Agent must patch middleware to renew JWT on 401 before retry.', confidence: 0.92, verifyCmd: 'pnpm test tests/agent/auth.spec.ts',      included: true },
   { id: 't02', file: 'tests/agent/checkout.spec.ts',  name: 'add idempotency key to charge',               summary: 'Refactor checkout handler; add I-key generation + Stripe replay.', confidence: 0.89, verifyCmd: 'pnpm test tests/agent/checkout.spec.ts', included: true },
@@ -85,6 +93,69 @@ export const OTHER_MODELS: Model[] = [
 ];
 
 export const ALL_MODELS: Model[] = [...TOP_MODELS, ...OTHER_MODELS];
+
+// Per-model host catalog. Multi-host models let user pick which lane(s) to test.
+// Single-host models auto-pin. Prices per host reflect real OR-Broadcast findings from canaryone-cloud.
+export const HOSTS_BY_MODEL: Record<string, Host[]> = {
+  'z-ai/glm-5.2': [
+    { slug: 'baseten/fp8',   displayName: 'Baseten (fp8)',    inputPrice: 0.14, outputPrice: 0.44 },
+    { slug: 'baseten/fast',  displayName: 'Baseten (fast)',   inputPrice: 0.21, outputPrice: 0.66 },
+    { slug: 'fireworks',     displayName: 'Fireworks',        inputPrice: 0.15, outputPrice: 0.45 },
+    { slug: 'together',      displayName: 'Together',         inputPrice: 0.18, outputPrice: 0.55 },
+    { slug: 'deepinfra/fp4', displayName: 'DeepInfra (fp4)',  inputPrice: 0.14, outputPrice: 0.44 },
+    { slug: 'baidu',         displayName: 'Baidu',            inputPrice: 0.12, outputPrice: 0.36 },
+    { slug: 'novita',        displayName: 'Novita',           inputPrice: 0.13, outputPrice: 0.40 },
+    { slug: 'streamlake',    displayName: 'StreamLake',       inputPrice: 0.15, outputPrice: 0.45 },
+    { slug: 'coreweave',     displayName: 'CoreWeave',        inputPrice: 0.17, outputPrice: 0.51 },
+    { slug: 'atlascloud',    displayName: 'AtlasCloud',       inputPrice: 0.16, outputPrice: 0.48 },
+  ],
+  'deepseek/deepseek-v4-flash': [
+    { slug: 'baidu',         displayName: 'Baidu',                     inputPrice: 0.18, outputPrice: 0.72 },
+    { slug: 'deepseek',      displayName: 'DeepSeek (first-party)',    inputPrice: 0.17, outputPrice: 0.68, isFirstParty: true },
+    { slug: 'novita',        displayName: 'Novita',                    inputPrice: 0.22, outputPrice: 0.88 },
+    { slug: 'deepinfra',     displayName: 'DeepInfra',                 inputPrice: 0.20, outputPrice: 0.80 },
+  ],
+  'deepseek/deepseek-v4-pro': [
+    { slug: 'deepseek',      displayName: 'DeepSeek (first-party)',    inputPrice: 0.40, outputPrice: 1.60, isFirstParty: true },
+    { slug: 'deepinfra',     displayName: 'DeepInfra',                 inputPrice: 0.42, outputPrice: 1.68 },
+  ],
+  'anthropic/claude-haiku-4.5':  [{ slug: 'anthropic', displayName: 'Anthropic',      inputPrice: 1.00,  outputPrice: 5.00,  isFirstParty: true }],
+  'anthropic/claude-sonnet-4.6': [{ slug: 'anthropic', displayName: 'Anthropic',      inputPrice: 3.00,  outputPrice: 15.00, isFirstParty: true }],
+  'anthropic/claude-opus-4.7':   [{ slug: 'anthropic', displayName: 'Anthropic',      inputPrice: 15.00, outputPrice: 75.00, isFirstParty: true }],
+  'openai/gpt-5-mini':           [{ slug: 'openai',    displayName: 'OpenAI',          inputPrice: 0.30,  outputPrice: 2.40,  isFirstParty: true }],
+  'openai/gpt-5':                [{ slug: 'openai',    displayName: 'OpenAI',          inputPrice: 3.50,  outputPrice: 14.00, isFirstParty: true }],
+  'google/gemini-3-flash': [
+    { slug: 'google-ai-studio', displayName: 'Google AI Studio',       inputPrice: 0.30, outputPrice: 2.50, isFirstParty: true },
+    { slug: 'google-vertex',    displayName: 'Google Vertex',          inputPrice: 0.30, outputPrice: 2.50 },
+  ],
+  'x-ai/grok-4':                 [{ slug: 'xai',       displayName: 'xAI',             inputPrice: 5.00,  outputPrice: 15.00, isFirstParty: true }],
+  'qwen/qwen-3-coder': [
+    { slug: 'qwen',        displayName: 'Qwen (first-party)',          inputPrice: 0.30, outputPrice: 1.20, isFirstParty: true },
+    { slug: 'together',    displayName: 'Together',                    inputPrice: 0.35, outputPrice: 1.40 },
+    { slug: 'deepinfra',   displayName: 'DeepInfra',                   inputPrice: 0.32, outputPrice: 1.28 },
+    { slug: 'fireworks',   displayName: 'Fireworks',                   inputPrice: 0.35, outputPrice: 1.40 },
+  ],
+  'meta-llama/llama-4-scout': [
+    { slug: 'groq',        displayName: 'Groq',                        inputPrice: 0.25, outputPrice: 0.75 },
+    { slug: 'fireworks',   displayName: 'Fireworks',                   inputPrice: 0.28, outputPrice: 0.85 },
+    { slug: 'together',    displayName: 'Together',                    inputPrice: 0.30, outputPrice: 0.90 },
+    { slug: 'deepinfra',   displayName: 'DeepInfra',                   inputPrice: 0.28, outputPrice: 0.85 },
+    { slug: 'aws-bedrock', displayName: 'AWS Bedrock',                 inputPrice: 0.35, outputPrice: 1.05 },
+  ],
+  'mistralai/mistral-large-2': [
+    { slug: 'mistral',     displayName: 'Mistral (first-party)',       inputPrice: 2.00, outputPrice: 6.00, isFirstParty: true },
+    { slug: 'together',    displayName: 'Together',                    inputPrice: 2.10, outputPrice: 6.20 },
+  ],
+};
+
+// Fallback host for models we haven't cataloged: single default OR-routed host with model's list price.
+export function getHosts(modelSlug: string): Host[] {
+  const cataloged = HOSTS_BY_MODEL[modelSlug];
+  if (cataloged) return cataloged;
+  const m = ALL_MODELS.find((x) => x.slug === modelSlug);
+  if (!m) return [];
+  return [{ slug: 'or-routed', displayName: 'OR (auto-routed)', inputPrice: m.inputPrice, outputPrice: m.outputPrice }];
+}
 
 // Persist across screens
 export type SelectedModelKey = string; // slug
