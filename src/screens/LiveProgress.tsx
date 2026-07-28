@@ -4,6 +4,38 @@ import { useStore, parseLane } from '../state/store.js';
 import { ALL_MODELS, getDestinations, P50_RUN_SECONDS } from '../data/fixtures.js';
 import { SCREEN_ACCENT, familyColor, CELL_COLOR, CELL_GLYPH } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
+import type { OrCatalog, OrEndpoint } from '../data/schema.js';
+
+// Resolve model + destination display metadata from wherever we can find it —
+// the fixture catalog is only a mock. Real user runs select models from the
+// live OR catalog; those are NOT in fixtures.ts.
+function resolveLaneDisplay(
+  modelSlug: string,
+  destSlug: string,
+  orCatalog: OrCatalog | null,
+): { family: string; modelName: string; destName: string; router: string } {
+  // Model family + name
+  const fixtureModel = ALL_MODELS.find((m) => m.slug === modelSlug);
+  const catalogModel = orCatalog?.models.find((m) => m.slug === modelSlug);
+  const family = fixtureModel?.family ?? catalogModel?.family ?? familyFromSlug(modelSlug);
+  const modelName = fixtureModel?.displayName ?? catalogModel?.displayName ?? modelSlug;
+
+  // Destination name + router — try fixtures first, then OR endpoints, then slug.
+  const [router = 'openrouter', ...providerParts] = destSlug.split(':');
+  const providerTag = providerParts.join(':');
+  const fixtureDest = getDestinations(modelSlug).find((d) => d.slug === destSlug);
+  const orEndpoint: OrEndpoint | undefined = orCatalog?.endpointsBySlug?.[modelSlug]?.endpoints
+    .find((e) => e.providerTag === providerTag);
+  const destName = fixtureDest?.displayName ?? orEndpoint?.displayName ?? (providerTag || destSlug);
+
+  return { family, modelName, destName, router };
+}
+
+function familyFromSlug(slug: string): string {
+  const prefix = slug.split('/')[0]?.toLowerCase() ?? 'other';
+  const known = ['anthropic', 'openai', 'deepseek', 'google', 'xai', 'meta', 'qwen', 'mistral', 'cohere', 'z-ai'];
+  return known.includes(prefix) ? prefix : 'other';
+}
 
 export function LiveProgress() {
   const tasks = useStore((s) => s.tasks);
@@ -16,6 +48,7 @@ export function LiveProgress() {
   const abortRun = useStore((s) => s.abortRun);
   const reset = useStore((s) => s.reset);
   const goTo = useStore((s) => s.goTo);
+  const orCatalog = useStore((s) => s.orCatalog);
 
   // Force a re-render every second so elapsed/eta refresh even while the bus
   // is idle between session transitions.
@@ -81,8 +114,7 @@ export function LiveProgress() {
 
       {laneKeys.map((lane) => {
         const { model: modelSlug, dest: destSlug } = parseLane(lane);
-        const model = ALL_MODELS.find((m) => m.slug === modelSlug)!;
-        const dest = getDestinations(modelSlug).find((d) => d.slug === destSlug);
+        const disp = resolveLaneDisplay(modelSlug, destSlug, orCatalog);
         const laneCells = cells[lane] ?? {};
         const passed = includedTasks.filter((t) => laneCells[t.id]?.state === 'passed').length;
         const attempted = includedTasks.filter((t) => ['passed', 'failed', 'error'].includes(laneCells[t.id]?.state ?? '')).length;
@@ -93,14 +125,14 @@ export function LiveProgress() {
         return (
           <Box key={lane} flexShrink={0}>
             <Box width={20}>
-              <Text color={familyColor(model.family)} bold>● </Text>
-              <Text color={familyColor(model.family)}>{truncate(model.displayName, 17)}</Text>
+              <Text color={familyColor(disp.family)} bold>● </Text>
+              <Text color={familyColor(disp.family)}>{truncate(disp.modelName, 17)}</Text>
             </Box>
             <Box width={18}>
-              <Text color="magenta">{truncate(dest?.displayName ?? destSlug, 17)}</Text>
+              <Text color="magenta">{truncate(disp.destName, 17)}</Text>
             </Box>
             <Box width={6}>
-              <Text color={routerTagColor(dest?.router)}>{shortRouter(dest?.router)}</Text>
+              <Text color={routerTagColor(disp.router)}>{shortRouter(disp.router)}</Text>
             </Box>
             {includedTasks.map((t) => {
               const cell = laneCells[t.id];
