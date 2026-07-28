@@ -6,6 +6,9 @@ import type { MatchedFile } from '../scan/glob.js';
 import { loadOrCatalog, fetchModelEndpoints, readCachedEndpoints } from '../scan/or-catalog.js';
 import { detectOrKey, writeConfig } from './../scan/orchestrator.js';
 import { runMethodology, isMethodologyFresh } from '../scan/methodology.js';
+import { RunEngine, type LaneSpec, type TaskSpec, type RunSpec } from '../runner/orchestrator.js';
+import type { CellState as EngineCellState, CellUpdate } from '../runner/event-bus.js';
+import { randomUUID } from 'node:crypto';
 
 export type CatalogStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type EndpointStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -55,6 +58,9 @@ type State = {
   runFinishedAt: number | null;
   totalSpend: number;
   reportPath: string | null;
+  runId: string | null;
+  runError: string | null;
+  engine: RunEngine | null;
   goTo: (screen: Screen) => void;
   setScanResult: (r: DeterministicScan) => void;
   setConfig: (c: Config) => void;
@@ -74,8 +80,9 @@ type State = {
   setParallelism: (v: number) => void;
   setRepeats: (v: number) => void;
   lanes: () => LaneKey[];
-  startRun: () => void;
-  tick: () => void;
+  startRun: () => Promise<void>;
+  abortRun: () => void;
+  tick: () => void;                // legacy no-op (kept so LiveProgress imports don't break)
   reset: () => void;
 };
 
@@ -126,6 +133,9 @@ export const useStore = create<State>((set, get) => ({
   runFinishedAt: null,
   totalSpend: 0,
   reportPath: null,
+  runId: null,
+  runError: null,
+  engine: null,
   goTo: (screen) => set({ screen }),
   setScanResult: (r) => set({ scanResult: r }),
   setConfig: (c) => { set({ config: c }); get().applyConfigToTasks(); },
@@ -308,71 +318,102 @@ export const useStore = create<State>((set, get) => ({
     }
     return out;
   },
-  startRun: () => {
+  startRun: async () => {
     const s = get();
     const includedTasks = s.tasks.filter((t) => t.included);
-    const lanes = s.lanes();
+    const laneKeys = s.lanes();
+    if (!includedTasks.length || !laneKeys.length) {
+      set({ runError: 'No tasks or lanes selected — cannot start run.' });
+      return;
+    }
+    if (!s.config) {
+      set({ runError: 'Config not loaded — walk through onboarding first.' });
+      return;
+    }
+    const detected = await detectOrKey();
+    if (!detected.value) {
+      set({ runError: 'No OpenRouter key available — cannot start run.' });
+      return;
+    }
+
+    // Build LaneSpec[] from selected models × destinations, hydrating endpoint
+    // metadata from the OR catalog so the proxy has pricing for cost math.
+    const laneSpecs: LaneSpec[] = [];
+    for (const key of laneKeys) {
+      const { model: modelSlug, dest: destSlug } = parseLane(key);
+      const endpoints = s.orCatalog?.endpointsBySlug?.[modelSlug]?.endpoints ?? [];
+      // Destination slug format: "<router>:<providerTag>" — e.g. "openrouter:baseten/fp8".
+      const [router, ...providerParts] = destSlug.split(':');
+      const providerTag = providerParts.join(':') || null;
+      const endpoint = endpoints.find((e) => e.providerTag === providerTag) ?? null;
+      laneSpecs.push({
+        modelSlug,
+        destinationSlug: destSlug,
+        router: router || 'openrouter',
+        providerTag,
+        endpoint,
+      });
+    }
+
+    const taskSpecs: TaskSpec[] = includedTasks.map((t) => ({
+      id: t.id, file: t.file, summary: t.summary,
+    }));
+
+    // Seed cells as queued so LiveProgress renders the full matrix immediately.
     const cells: Record<LaneKey, Record<string, Cell>> = {};
-    for (const lane of lanes) {
+    for (const lane of laneKeys) {
       cells[lane] = {};
       for (const task of includedTasks) {
         cells[lane][task.id] = { state: 'queued', costUsd: 0, latencyMs: 0 };
       }
     }
-    const stamp = '2026-07-28T09-30-00Z';
+
+    const engine = new RunEngine();
+    const spec: RunSpec = {
+      runId: randomUUID(),
+      targetDir: s.targetDir,
+      configDir: s.configDir,
+      parallelism: s.parallelism,
+      repeats: s.repeats,
+      maxSpend: s.maxSpend,
+      lanes: laneSpecs,
+      tasks: taskSpecs,
+      orKey: detected.value,
+      runnerCmd: s.config.runner.cmd,
+    };
+
+    engine.bus.on('session:running', (u) => applyCellUpdate(u));
+    engine.bus.on('session:complete', (u) => applyCellUpdate(u));
+    engine.bus.on('session:failed', (u) => applyCellUpdate(u));
+    engine.bus.on('run:complete', () => {
+      set({ runFinishedAt: Date.now(), engine: null });
+    });
+    engine.bus.on('run:aborted', () => {
+      set({ runFinishedAt: Date.now(), engine: null });
+    });
+
     set({
       screen: 'liveProgress',
       cells,
       runStartedAt: Date.now(),
       runFinishedAt: null,
       totalSpend: 0,
-      reportPath: `.c1/reports/${stamp}/index.html`,
+      reportPath: `.c1/runs/${spec.runId}/`,
+      runId: spec.runId,
+      runError: null,
+      engine,
+    });
+
+    // Fire-and-forget; the bus drives UI updates.
+    engine.run(spec).catch((e) => {
+      set({ runError: e instanceof Error ? e.message : String(e), runFinishedAt: Date.now(), engine: null });
     });
   },
-  tick: () => {
-    const s = get();
-    if (!s.runStartedAt || s.runFinishedAt) return;
-    const includedTasks = s.tasks.filter((t) => t.included);
-    const lanes = Object.keys(s.cells);
-    if (!lanes.length || !includedTasks.length) return;
-
-    const cells = { ...s.cells };
-    let totalSpend = s.totalSpend;
-
-    for (const lane of lanes) {
-      const { model, dest } = parseLane(lane);
-      const modelObj = ALL_MODELS.find((m) => m.slug === model);
-      const destObj = getDestinations(model).find((d) => d.slug === dest);
-      if (!modelObj) continue;
-      const inPrice = destObj?.inputPrice ?? modelObj.inputPrice;
-      const outPrice = destObj?.outputPrice ?? modelObj.outputPrice;
-
-      const laneCells = { ...cells[lane] };
-      let running = includedTasks.find((t) => laneCells[t.id].state === 'running');
-      if (!running) {
-        const next = includedTasks.find((t) => laneCells[t.id].state === 'queued');
-        if (next) laneCells[next.id] = { state: 'running', costUsd: 0, latencyMs: 0 };
-      } else {
-        const inputCost = (BASELINE_INPUT_TOKENS / 1_000_000) * inPrice;
-        const outputCost = (BASELINE_OUTPUT_TOKENS / 1_000_000) * outPrice;
-        const cost = inputCost + outputCost + JUDGE_COST_PER_TASK;
-        const h = (lane + running.id).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-        const outcome: 'passed' | 'failed' | 'error' =
-          h % 13 === 0 ? 'error' : h % 7 === 0 ? 'failed' : 'passed';
-        laneCells[running.id] = { state: outcome, costUsd: cost, latencyMs: P50_RUN_SECONDS * 1000 };
-        totalSpend += cost;
-      }
-      cells[lane] = laneCells;
-    }
-
-    const done = lanes.every((lane) =>
-      includedTasks.every((t) => {
-        const st = cells[lane][t.id].state;
-        return st === 'passed' || st === 'failed' || st === 'error';
-      })
-    );
-    set({ cells, totalSpend, runFinishedAt: done ? Date.now() : null });
+  abortRun: () => {
+    const eng = get().engine;
+    if (eng) eng.abort();
   },
+  tick: () => { /* legacy no-op — real updates come from the RunEngine bus */ },
   reset: () => set({
     screen: 'keySetup',
     onboardingStep: 0,
@@ -381,5 +422,40 @@ export const useStore = create<State>((set, get) => ({
     runFinishedAt: null,
     totalSpend: 0,
     reportPath: null,
+    runId: null,
+    runError: null,
+    engine: null,
   }),
 }));
+
+// ---------- bus → cell update helper ----------
+
+function applyCellUpdate(u: CellUpdate): void {
+  const engineToFixture: Record<EngineCellState, Cell['state']> = {
+    queued: 'queued',
+    running: 'running',
+    passed: 'passed',
+    failed: 'failed',
+    error: 'error',
+    aborted: 'error',   // fixture Cell type has no 'aborted'; render as error for M1
+  };
+  useStore.setState((s) => {
+    const nextCells = { ...s.cells };
+    const laneCells = { ...(nextCells[u.key.laneKey] ?? {}) };
+    const prev = laneCells[u.key.taskId] ?? { state: 'queued', costUsd: 0, latencyMs: 0 };
+    // Aggregate: later severity wins over earlier (error > failed > passed > running > queued).
+    const severity: Record<Cell['state'], number> = { queued: 0, running: 1, passed: 2, failed: 3, error: 4 };
+    const nextState = engineToFixture[u.state];
+    const state = severity[nextState] >= severity[prev.state] ? nextState : prev.state;
+    laneCells[u.key.taskId] = {
+      state,
+      costUsd: prev.costUsd + u.costUsd,
+      latencyMs: Math.max(prev.latencyMs, u.latencyMs),
+    };
+    nextCells[u.key.laneKey] = laneCells;
+    return {
+      cells: nextCells,
+      totalSpend: s.totalSpend + u.costUsd,
+    };
+  });
+}

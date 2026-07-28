@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useStore, parseLane } from '../state/store.js';
 import { ALL_MODELS, getDestinations, P50_RUN_SECONDS } from '../data/fixtures.js';
@@ -12,23 +12,29 @@ export function LiveProgress() {
   const runFinishedAt = useStore((s) => s.runFinishedAt);
   const totalSpend = useStore((s) => s.totalSpend);
   const reportPath = useStore((s) => s.reportPath);
-  const tick = useStore((s) => s.tick);
+  const runError = useStore((s) => s.runError);
+  const abortRun = useStore((s) => s.abortRun);
   const reset = useStore((s) => s.reset);
   const goTo = useStore((s) => s.goTo);
 
+  // Force a re-render every second so elapsed/eta refresh even while the bus
+  // is idle between session transitions.
+  const [, setNow] = useState(0);
   useEffect(() => {
     if (runFinishedAt) return;
-    const timer = setInterval(tick, 300);
-    return () => clearInterval(timer);
-  }, [runFinishedAt, tick]);
+    const t = setInterval(() => setNow((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [runFinishedAt]);
 
   useInput((input, key) => {
-    if (!runFinishedAt) return;
+    if (!runFinishedAt) {
+      // In-run: `x` aborts (finish in-flight, no new spawns).
+      if (input === 'x') abortRun();
+      if (input === 'q' || key.escape) { abortRun(); }
+      return;
+    }
     if (input === 'q' || key.escape) process.exit(0);
     if (input === 'r') { reset(); goTo('pickTasks'); }
-    if (input === 'o' || key.return) {
-      // In real product: `open` shell out. Mock: no-op.
-    }
   });
 
   const includedTasks = tasks.filter((t) => t.included);
@@ -127,11 +133,21 @@ export function LiveProgress() {
         <Box marginTop={1} flexDirection="column" flexShrink={0}>
           <Text color="#22c55e" bold>Run complete.</Text>
           <Box marginTop={0}>
-            <Text color="gray">Rich HTML report saved to:</Text>
+            <Text color="gray">Wire log + SQLite + per-session MD at:</Text>
           </Box>
           <Box>
             <Text color="cyan" bold>  {reportPath}</Text>
           </Box>
+          <Box marginTop={1}>
+            <Text color="gray" dimColor>traffic.jsonl · db.sqlite · sessions/&lt;session_id&gt;.md · meta.json</Text>
+          </Box>
+        </Box>
+      )}
+
+      {runError && (
+        <Box marginTop={1} flexDirection="column" flexShrink={0}>
+          <Text color="#ef4444" bold>Run error:</Text>
+          <Text color="white">{runError}</Text>
         </Box>
       )}
     </Frame>

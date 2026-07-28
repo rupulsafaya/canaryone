@@ -10,10 +10,11 @@
     "dev": "tsx src/cli.tsx",
     "build": "tsc",
     "start": "node dist/cli.js",
-    "test:tui": "node tests/tui.test.mjs"
+    "test:tui": "node tests/tui.test.mjs",
+    "test:runner": "tsx tests/runner.test.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
