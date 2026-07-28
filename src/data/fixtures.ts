@@ -30,7 +30,14 @@ export type Model = {
 };
 
 export type CellState = 'queued' | 'running' | 'passed' | 'failed' | 'error';
-export type Cell = { state: CellState; costUsd: number; latencyMs: number };
+// Cell = one (lane, task) tile. With repeats > 1 the cell aggregates N sessions:
+//   state       — worst-of the sessions (any error > any failed > passed > running > queued)
+//   costUsd     — SUM of session costs
+//   latencyMs   — MAX of session latencies
+//   passed      — how many of `attempted` finished with status='complete'
+//   attempted   — how many sessions reached a terminal state (pass/fail/error)
+// passed/attempted let LiveProgress show cost-per-pass at the lane level.
+export type Cell = { state: CellState; costUsd: number; latencyMs: number; passed: number; attempted: number };
 
 export type Router = 'openrouter' | 'direct' | 'bedrock' | 'vertex' | 'azure';
 

@@ -43,6 +43,38 @@ function resolveLaneDisplay(
   return { family, modelName, destName, router };
 }
 
+// Column widths — chosen to fit up to ~5 tasks side by side in a 140-col frame.
+// Model + destination widened; a new $/pass column made room for by tightening
+// spend column formatting (now scientific-friendly, e.g. $0.000059).
+const COLS = {
+  model:    30,
+  dest:     22,
+  router:   5,
+  taskCell: 4,
+  pass:     8,
+  spend:    11,
+  costPer:  11,
+  eta:      8,
+};
+const TOTAL_WIDTH = (nTasks: number) =>
+  COLS.model + COLS.dest + COLS.router + nTasks * COLS.taskCell +
+  2 + COLS.pass + COLS.spend + COLS.costPer + COLS.eta;
+
+// Format a $ amount at the right precision for whatever scale the value is at:
+//   ≥ 1        → $1.23
+//   ≥ 0.01     → $0.0123
+//   ≥ 0.0001   → $0.000123
+//   else       → $0.00e-7 (fallback for anything below $10^-6)
+//   0          → $0
+function fmtDollars(v: number): string {
+  if (!v) return '$0';
+  const abs = Math.abs(v);
+  if (abs >= 1)      return `$${v.toFixed(2)}`;
+  if (abs >= 0.01)   return `$${v.toFixed(4)}`;
+  if (abs >= 0.0001) return `$${v.toFixed(6)}`;
+  return `$${v.toExponential(2)}`;
+}
+
 function familyFromSlug(slug: string): string {
   const prefix = slug.split('/')[0]?.toLowerCase() ?? 'other';
   const known = ['anthropic', 'openai', 'deepseek', 'google', 'xai', 'meta', 'qwen', 'mistral', 'cohere', 'z-ai'];
@@ -108,7 +140,7 @@ export function LiveProgress() {
     <Frame
       title={runFinishedAt ? 'Run complete' : 'Running'}
       accent={runFinishedAt ? '#22c55e' : SCREEN_ACCENT.liveProgress}
-      subtitle={`${doneCells}/${totalCells} · $${totalSpend.toFixed(4)} · ${totalInputTokens}/${totalOutputTokens} tok · elapsed ${fmtDuration(elapsedSec)}${!runFinishedAt && etaSec ? ` · eta ${fmtDuration(etaSec)}` : ''}`}
+      subtitle={`${doneCells}/${totalCells} · ${fmtDollars(totalSpend)} · ${totalInputTokens}/${totalOutputTokens} tok · elapsed ${fmtDuration(elapsedSec)}${!runFinishedAt && etaSec ? ` · eta ${fmtDuration(etaSec)}` : ''}`}
       footer={
         runFinishedAt ? (
           <Text color="gray">
@@ -121,55 +153,61 @@ export function LiveProgress() {
     >
       {/* Header row */}
       <Box flexShrink={0}>
-        <Box width={20}><Text color="magenta" bold>Model</Text></Box>
-        <Box width={18}><Text color="magenta" bold>Destination</Text></Box>
-        <Box width={6}><Text color="magenta" bold>Rtr</Text></Box>
+        <Box width={COLS.model}><Text color="magenta" bold>Model</Text></Box>
+        <Box width={COLS.dest}><Text color="magenta" bold>Destination</Text></Box>
+        <Box width={COLS.router}><Text color="magenta" bold>Rtr</Text></Box>
         {includedTasks.map((t) => (
-          <Box key={t.id} width={4}><Text color="gray" bold>{t.id}</Text></Box>
+          <Box key={t.id} width={COLS.taskCell}><Text color="gray" bold>{t.id}</Text></Box>
         ))}
         <Box paddingLeft={2}>
-          <Box width={7}><Text color="magenta" bold>pass</Text></Box>
-          <Box width={9}><Text color="magenta" bold>spend</Text></Box>
-          <Box width={7}><Text color="magenta" bold>eta</Text></Box>
+          <Box width={COLS.pass}><Text color="magenta" bold>pass</Text></Box>
+          <Box width={COLS.spend}><Text color="magenta" bold>spend</Text></Box>
+          <Box width={COLS.costPer}><Text color="magenta" bold>$/pass</Text></Box>
+          <Box width={COLS.eta}><Text color="magenta" bold>eta</Text></Box>
         </Box>
       </Box>
-      <Box flexShrink={0}><Text color="gray" dimColor>{'─'.repeat(90)}</Text></Box>
+      <Box flexShrink={0}><Text color="gray" dimColor>{'─'.repeat(TOTAL_WIDTH(includedTasks.length))}</Text></Box>
 
       {laneKeys.map((lane) => {
         const { model: modelSlug, dest: destSlug } = parseLane(lane);
         const disp = resolveLaneDisplay(modelSlug, destSlug, orCatalog);
         const laneCells = cells[lane] ?? {};
-        const passed = includedTasks.filter((t) => laneCells[t.id]?.state === 'passed').length;
-        const attempted = includedTasks.filter((t) => ['passed', 'failed', 'error'].includes(laneCells[t.id]?.state ?? '')).length;
+        const passed = includedTasks.reduce((a, t) => a + (laneCells[t.id]?.passed ?? 0), 0);
+        const attempted = includedTasks.reduce((a, t) => a + (laneCells[t.id]?.attempted ?? 0), 0);
         const spend = includedTasks.reduce((a, t) => a + (laneCells[t.id]?.costUsd ?? 0), 0);
         const running = includedTasks.some((t) => laneCells[t.id]?.state === 'running');
         const queued = includedTasks.filter((t) => laneCells[t.id]?.state === 'queued').length;
         const etaLane = running ? P50_RUN_SECONDS * (queued + 1) : queued * P50_RUN_SECONDS;
         return (
           <Box key={lane} flexShrink={0}>
-            <Box width={20}>
+            <Box width={COLS.model}>
               <Text color={familyColor(disp.family)} bold>● </Text>
-              <Text color={familyColor(disp.family)}>{truncate(disp.modelName, 17)}</Text>
+              <Text color={familyColor(disp.family)}>{truncate(disp.modelName, COLS.model - 3)}</Text>
             </Box>
-            <Box width={18}>
-              <Text color="magenta">{truncate(disp.destName, 17)}</Text>
+            <Box width={COLS.dest}>
+              <Text color="magenta">{truncate(disp.destName, COLS.dest - 1)}</Text>
             </Box>
-            <Box width={6}>
+            <Box width={COLS.router}>
               <Text color={routerTagColor(disp.router)}>{shortRouter(disp.router)}</Text>
             </Box>
             {includedTasks.map((t) => {
               const cell = laneCells[t.id];
               const state = cell?.state ?? 'queued';
               return (
-                <Box key={t.id} width={4}>
+                <Box key={t.id} width={COLS.taskCell}>
                   <Text color={CELL_COLOR[state]}>{CELL_GLYPH[state]} </Text>
                 </Box>
               );
             })}
             <Box paddingLeft={2}>
-              <Box width={7}><Text color="white">{passed}/{attempted}</Text></Box>
-              <Box width={9}><Text color="gray">${spend.toFixed(2)}</Text></Box>
-              <Box width={7}><Text color="gray">{etaLane > 0 && !runFinishedAt ? `~${fmtDuration(etaLane)}` : ''}</Text></Box>
+              <Box width={COLS.pass}><Text color="white">{passed}/{attempted}</Text></Box>
+              <Box width={COLS.spend}><Text color="gray">{fmtDollars(spend)}</Text></Box>
+              <Box width={COLS.costPer}>
+                <Text color={passed > 0 ? '#22c55e' : 'gray'}>
+                  {passed > 0 ? fmtDollars(spend / passed) : '—'}
+                </Text>
+              </Box>
+              <Box width={COLS.eta}><Text color="gray">{etaLane > 0 && !runFinishedAt ? `~${fmtDuration(etaLane)}` : ''}</Text></Box>
             </Box>
           </Box>
         );

@@ -374,7 +374,7 @@ export const useStore = create<State>((set, get) => ({
     for (const lane of laneKeys) {
       cells[lane] = {};
       for (const task of includedTasks) {
-        cells[lane][task.id] = { state: 'queued', costUsd: 0, latencyMs: 0 };
+        cells[lane][task.id] = { state: 'queued', costUsd: 0, latencyMs: 0, passed: 0, attempted: 0 };
       }
     }
 
@@ -456,15 +456,20 @@ function applyCellUpdate(u: CellUpdate): void {
   useStore.setState((s) => {
     const nextCells = { ...s.cells };
     const laneCells = { ...(nextCells[u.key.laneKey] ?? {}) };
-    const prev = laneCells[u.key.taskId] ?? { state: 'queued', costUsd: 0, latencyMs: 0 };
+    const prev = laneCells[u.key.taskId] ?? { state: 'queued', costUsd: 0, latencyMs: 0, passed: 0, attempted: 0 };
     // Aggregate: later severity wins over earlier (error > failed > passed > running > queued).
     const severity: Record<Cell['state'], number> = { queued: 0, running: 1, passed: 2, failed: 3, error: 4 };
     const nextState = engineToFixture[u.state];
     const state = severity[nextState] >= severity[prev.state] ? nextState : prev.state;
+    // Count a session in `attempted` only when it reaches a terminal state
+    // (a running update is transitional and shouldn't inflate the count).
+    const isTerminal = u.state === 'passed' || u.state === 'failed' || u.state === 'error' || u.state === 'aborted';
     laneCells[u.key.taskId] = {
       state,
       costUsd: prev.costUsd + u.costUsd,
       latencyMs: Math.max(prev.latencyMs, u.latencyMs),
+      passed:    prev.passed    + (u.state === 'passed' ? 1 : 0),
+      attempted: prev.attempted + (isTerminal ? 1 : 0),
     };
     nextCells[u.key.laneKey] = laneCells;
     return {
