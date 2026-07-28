@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useStore } from '../state/store.js';
-import { ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS, getHosts } from '../data/fixtures.js';
+import { ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS, getDestinations } from '../data/fixtures.js';
 import { SCREEN_ACCENT, familyColor } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 
 export function Confirm() {
   const tasks = useStore((s) => s.tasks);
   const selectedModels = useStore((s) => s.selectedModels);
-  const selectedHosts = useStore((s) => s.selectedHosts);
+  const selectedDestinations = useStore((s) => s.selectedDestinations);
   const repeats = useStore((s) => s.repeats);
   const parallelism = useStore((s) => s.parallelism);
   const maxSpend = useStore((s) => s.maxSpend);
@@ -34,19 +34,19 @@ export function Confirm() {
     if (key.return) startRun();
     else if (input === 't') goTo('pickTasks');
     else if (input === 'm') goTo('pickModels');
-    else if (input === 'h') goTo('pickHosts');
+    else if (input === 'h') goTo('pickDestinations');
     else if (input === 'c') { setCapDraft(maxSpend.toFixed(2)); setEditingCap(true); }
     else if (input === 'q' || key.escape) process.exit(0);
   });
 
   const includedTasks = tasks.filter((t) => t.included);
-  const lanes: { model: string; host: string; inputPrice: number; outputPrice: number }[] = [];
+  const lanes: { model: string; dest: string; router: string; inputPrice: number; outputPrice: number }[] = [];
   for (const model of selectedModels) {
-    const hosts = selectedHosts[model] ?? new Set<string>();
-    for (const hostSlug of hosts) {
-      const h = getHosts(model).find((x) => x.slug === hostSlug);
-      if (!h) continue;
-      lanes.push({ model, host: hostSlug, inputPrice: h.inputPrice, outputPrice: h.outputPrice });
+    const dests = selectedDestinations[model] ?? new Set<string>();
+    for (const destSlug of dests) {
+      const d = getDestinations(model).find((x) => x.slug === destSlug);
+      if (!d) continue;
+      lanes.push({ model, dest: destSlug, router: d.router, inputPrice: d.inputPrice, outputPrice: d.outputPrice });
     }
   }
   const totalRuns = includedTasks.length * lanes.length * repeats;
@@ -90,8 +90,8 @@ export function Confirm() {
             const m = ALL_MODELS.find((x) => x.slug === l.model);
             if (!m) return null;
             return (
-              <Text key={`${l.model}::${l.host}`}>
-                {'  '}<Text color={familyColor(m.family)}>●</Text> <Text color="white">{m.displayName}</Text> <Text color="gray">·</Text> <Text color="magenta">{l.host}</Text> <Text color="gray">· ${l.inputPrice.toFixed(2)}/${l.outputPrice.toFixed(2)}/M</Text>
+              <Text key={`${l.model}@${l.dest}`}>
+                {'  '}<Text color={familyColor(m.family)}>●</Text> <Text color="white">{m.displayName}</Text> <Text color="gray">·</Text> <Text color="magenta">{l.dest.replace(/^[^:]+:/, '')}</Text> <Text color="gray">·</Text> <Text color="#22d3ee">{l.router}</Text> <Text color="gray">· ${l.inputPrice.toFixed(2)}/${l.outputPrice.toFixed(2)}/M</Text>
               </Text>
             );
           })}

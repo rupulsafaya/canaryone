@@ -1,13 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useStore } from '../state/store.js';
-import { TOP_MODELS, OTHER_MODELS, ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, getHosts } from '../data/fixtures.js';
+import { TOP_MODELS, OTHER_MODELS, ALL_MODELS, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, getDestinations } from '../data/fixtures.js';
 import { SCREEN_ACCENT, familyColor, changeColor } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 
 export function PickModels() {
   const selectedModels = useStore((s) => s.selectedModels);
-  const selectedHosts = useStore((s) => s.selectedHosts);
+  const selectedDestinations = useStore((s) => s.selectedDestinations);
   const toggleModel = useStore((s) => s.toggleModel);
   const tasks = useStore((s) => s.tasks);
   const repeats = useStore((s) => s.repeats);
@@ -46,31 +46,31 @@ export function PickModels() {
     else if (key.downArrow) setCursor((c) => Math.min(Math.max(0, modelRows.length - 1), c + 1));
     else if (input === ' ' && modelRows[cursor]) toggleModel(modelRows[cursor].model.slug);
     else if (input === '/') setSearching(true);
-    else if (key.return) goTo('pickHosts');
+    else if (key.return) goTo('pickDestinations');
     else if (input === 'b' || key.escape) goTo('pickTasks');
   });
 
   const includedTasks = tasks.filter((t) => t.included);
   const totalLanes = useMemo(() => {
     let n = 0;
-    for (const m of selectedModels) n += (selectedHosts[m]?.size ?? 0);
+    for (const m of selectedModels) n += (selectedDestinations[m]?.size ?? 0);
     return n;
-  }, [selectedModels, selectedHosts]);
+  }, [selectedModels, selectedDestinations]);
 
   const estCost = useMemo(() => {
     let total = 0;
     for (const slug of selectedModels) {
-      const hosts = selectedHosts[slug] ?? new Set<string>();
-      for (const hostSlug of hosts) {
-        const h = getHosts(slug).find((x) => x.slug === hostSlug);
-        const inP = h?.inputPrice ?? ALL_MODELS.find((m) => m.slug === slug)?.inputPrice ?? 0;
-        const outP = h?.outputPrice ?? ALL_MODELS.find((m) => m.slug === slug)?.outputPrice ?? 0;
+      const dests = selectedDestinations[slug] ?? new Set<string>();
+      for (const destSlug of dests) {
+        const d = getDestinations(slug).find((x) => x.slug === destSlug);
+        const inP = d?.inputPrice ?? ALL_MODELS.find((m) => m.slug === slug)?.inputPrice ?? 0;
+        const outP = d?.outputPrice ?? ALL_MODELS.find((m) => m.slug === slug)?.outputPrice ?? 0;
         total += ((BASELINE_INPUT_TOKENS / 1_000_000) * inP + (BASELINE_OUTPUT_TOKENS / 1_000_000) * outP) * includedTasks.length * repeats;
       }
     }
     total += JUDGE_COST_PER_TASK * includedTasks.length * totalLanes * repeats;
     return total;
-  }, [selectedModels, selectedHosts, includedTasks.length, repeats, totalLanes]);
+  }, [selectedModels, selectedDestinations, includedTasks.length, repeats, totalLanes]);
 
   return (
     <Frame
@@ -80,7 +80,7 @@ export function PickModels() {
       footer={
         <Box flexDirection="column">
           <Text color="gray">
-            <Text color="cyan">↑↓</Text> nav · <Text color="cyan">space</Text> toggle · <Text color="cyan">/</Text> search · <Text color="cyan">enter</Text> pick hosts → · <Text color="cyan">b</Text> back
+            <Text color="cyan">↑↓</Text> nav · <Text color="cyan">space</Text> toggle · <Text color="cyan">/</Text> search · <Text color="cyan">enter</Text> pick destinations → · <Text color="cyan">b</Text> back
           </Text>
           {searching && <Text color="cyan">Search: <Text color="white" bold>{query}</Text><Text color="gray">▏</Text><Text color="gray"> · enter/esc close</Text></Text>}
         </Box>

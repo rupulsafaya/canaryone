@@ -27,12 +27,19 @@ export type Model = {
 export type CellState = 'queued' | 'running' | 'passed' | 'failed' | 'error';
 export type Cell = { state: CellState; costUsd: number; latencyMs: number };
 
-export type Host = {
-  slug: string;              // e.g. "baseten/fp8"
-  displayName: string;
-  inputPrice: number;        // $/M — may differ from model default
+export type Router = 'openrouter' | 'direct' | 'bedrock' | 'vertex' | 'azure';
+
+export type Destination = {
+  slug: string;              // canonical: '<router>:<provider>[/<variant>]'  e.g. 'openrouter:baseten/fp8', 'direct:baseten', 'bedrock:anthropic-haiku-4.5-v1'
+  router: Router;
+  provider: string;          // 'baseten', 'baidu', 'anthropic', 'nebius', ...
+  variant?: string;          // 'fp8', 'fast', ...
+  displayName: string;       // 'Baseten (fp8)'
+  inputPrice: number;        // $/M — per-destination pricing
   outputPrice: number;
+  requiresKey?: string;      // env var name, e.g. 'BASETEN_KEY'. Undefined = uses OR_KEY (for openrouter router).
   isFirstParty?: boolean;
+  isPreview?: boolean;       // v0.1 preview — visible in picker but not yet functional
 };
 
 export const TASKS: Task[] = [
@@ -94,67 +101,138 @@ export const OTHER_MODELS: Model[] = [
 
 export const ALL_MODELS: Model[] = [...TOP_MODELS, ...OTHER_MODELS];
 
-// Per-model host catalog. Multi-host models let user pick which lane(s) to test.
-// Single-host models auto-pin. Prices per host reflect real OR-Broadcast findings from canaryone-cloud.
-export const HOSTS_BY_MODEL: Record<string, Host[]> = {
+// Which direct-API keys the user has in their env. Mock: all false so direct destinations preview as greyed.
+// In real product, populated from process.env at first-run scan.
+export const ENV_KEYS_PRESENT: Record<string, boolean> = {
+  OR_KEY: true,
+  BASETEN_KEY: false,
+  FIREWORKS_KEY: false,
+  TOGETHER_KEY: false,
+  DEEPINFRA_KEY: false,
+  ANTHROPIC_KEY: false,
+  OPENAI_KEY: false,
+  DEEPSEEK_KEY: false,
+  NEBIUS_KEY: false,
+  AWS_CREDENTIALS: false,
+  AZURE_OPENAI_KEY: false,
+  GCP_APPLICATION_CREDENTIALS: false,
+};
+
+// Per-model destination catalog. Each destination = (router, provider) tuple with concrete pricing.
+// Same (model, provider) can appear via multiple routers (OR vs direct vs Bedrock). User picks the
+// specific destination(s) they want to test — each becomes a lane in the run.
+// V0 ships OR destinations functional; direct/other-router destinations shown as isPreview.
+const or = (provider: string, variant: string | undefined, displayName: string, inputPrice: number, outputPrice: number, extra: Partial<Destination> = {}): Destination => ({
+  slug: `openrouter:${provider}${variant ? '/' + variant : ''}`,
+  router: 'openrouter',
+  provider, variant, displayName, inputPrice, outputPrice, ...extra,
+});
+const direct = (provider: string, displayName: string, inputPrice: number, outputPrice: number, requiresKey: string, extra: Partial<Destination> = {}): Destination => ({
+  slug: `direct:${provider}`,
+  router: 'direct',
+  provider, displayName, inputPrice, outputPrice, requiresKey, isPreview: true, ...extra,
+});
+const bedrock = (bedrockModelId: string, displayName: string, inputPrice: number, outputPrice: number): Destination => ({
+  slug: `bedrock:${bedrockModelId}`,
+  router: 'bedrock', provider: 'aws-bedrock', displayName, inputPrice, outputPrice,
+  requiresKey: 'AWS_CREDENTIALS', isPreview: true,
+});
+
+export const DESTINATIONS_BY_MODEL: Record<string, Destination[]> = {
   'z-ai/glm-5.2': [
-    { slug: 'baseten/fp8',   displayName: 'Baseten (fp8)',    inputPrice: 0.14, outputPrice: 0.44 },
-    { slug: 'baseten/fast',  displayName: 'Baseten (fast)',   inputPrice: 0.21, outputPrice: 0.66 },
-    { slug: 'fireworks',     displayName: 'Fireworks',        inputPrice: 0.15, outputPrice: 0.45 },
-    { slug: 'together',      displayName: 'Together',         inputPrice: 0.18, outputPrice: 0.55 },
-    { slug: 'deepinfra/fp4', displayName: 'DeepInfra (fp4)',  inputPrice: 0.14, outputPrice: 0.44 },
-    { slug: 'baidu',         displayName: 'Baidu',            inputPrice: 0.12, outputPrice: 0.36 },
-    { slug: 'novita',        displayName: 'Novita',           inputPrice: 0.13, outputPrice: 0.40 },
-    { slug: 'streamlake',    displayName: 'StreamLake',       inputPrice: 0.15, outputPrice: 0.45 },
-    { slug: 'coreweave',     displayName: 'CoreWeave',        inputPrice: 0.17, outputPrice: 0.51 },
-    { slug: 'atlascloud',    displayName: 'AtlasCloud',       inputPrice: 0.16, outputPrice: 0.48 },
+    or('baseten', 'fp8',  'Baseten (fp8)',    0.14, 0.44),
+    or('baseten', 'fast', 'Baseten (fast)',   0.21, 0.66),
+    or('fireworks', undefined, 'Fireworks',   0.15, 0.45),
+    or('together',  undefined, 'Together',    0.18, 0.55),
+    or('deepinfra', 'fp4', 'DeepInfra (fp4)', 0.14, 0.44),
+    or('baidu',     undefined, 'Baidu',       0.12, 0.36),
+    or('novita',    undefined, 'Novita',      0.13, 0.40),
+    or('streamlake',undefined, 'StreamLake',  0.15, 0.45),
+    or('coreweave', undefined, 'CoreWeave',   0.17, 0.51),
+    or('atlascloud',undefined, 'AtlasCloud',  0.16, 0.48),
+    direct('baseten',   'Baseten (direct)',  0.13, 0.41, 'BASETEN_KEY'),
+    direct('fireworks', 'Fireworks (direct)',0.14, 0.42, 'FIREWORKS_KEY'),
+    direct('nebius',    'Nebius (direct)',   0.13, 0.42, 'NEBIUS_KEY'),
   ],
   'deepseek/deepseek-v4-flash': [
-    { slug: 'baidu',         displayName: 'Baidu',                     inputPrice: 0.18, outputPrice: 0.72 },
-    { slug: 'deepseek',      displayName: 'DeepSeek (first-party)',    inputPrice: 0.17, outputPrice: 0.68, isFirstParty: true },
-    { slug: 'novita',        displayName: 'Novita',                    inputPrice: 0.22, outputPrice: 0.88 },
-    { slug: 'deepinfra',     displayName: 'DeepInfra',                 inputPrice: 0.20, outputPrice: 0.80 },
+    or('baidu',    undefined, 'Baidu',                  0.18, 0.72),
+    or('deepseek', undefined, 'DeepSeek (first-party)', 0.17, 0.68, { isFirstParty: true }),
+    or('novita',   undefined, 'Novita',                 0.22, 0.88),
+    or('deepinfra',undefined, 'DeepInfra',              0.20, 0.80),
+    direct('deepseek', 'DeepSeek (direct)', 0.14, 0.56, 'DEEPSEEK_KEY', { isFirstParty: true }),
+    direct('nebius',   'Nebius (direct)',   0.19, 0.76, 'NEBIUS_KEY'),
   ],
   'deepseek/deepseek-v4-pro': [
-    { slug: 'deepseek',      displayName: 'DeepSeek (first-party)',    inputPrice: 0.40, outputPrice: 1.60, isFirstParty: true },
-    { slug: 'deepinfra',     displayName: 'DeepInfra',                 inputPrice: 0.42, outputPrice: 1.68 },
+    or('deepseek', undefined, 'DeepSeek (first-party)', 0.40, 1.60, { isFirstParty: true }),
+    or('deepinfra',undefined, 'DeepInfra',              0.42, 1.68),
+    direct('deepseek', 'DeepSeek (direct)', 0.34, 1.36, 'DEEPSEEK_KEY', { isFirstParty: true }),
   ],
-  'anthropic/claude-haiku-4.5':  [{ slug: 'anthropic', displayName: 'Anthropic',      inputPrice: 1.00,  outputPrice: 5.00,  isFirstParty: true }],
-  'anthropic/claude-sonnet-4.6': [{ slug: 'anthropic', displayName: 'Anthropic',      inputPrice: 3.00,  outputPrice: 15.00, isFirstParty: true }],
-  'anthropic/claude-opus-4.7':   [{ slug: 'anthropic', displayName: 'Anthropic',      inputPrice: 15.00, outputPrice: 75.00, isFirstParty: true }],
-  'openai/gpt-5-mini':           [{ slug: 'openai',    displayName: 'OpenAI',          inputPrice: 0.30,  outputPrice: 2.40,  isFirstParty: true }],
-  'openai/gpt-5':                [{ slug: 'openai',    displayName: 'OpenAI',          inputPrice: 3.50,  outputPrice: 14.00, isFirstParty: true }],
+  'anthropic/claude-haiku-4.5': [
+    or('anthropic', undefined, 'Anthropic (via OR)', 1.00, 5.00, { isFirstParty: true }),
+    direct('anthropic', 'Anthropic (direct)', 0.80, 4.00, 'ANTHROPIC_KEY', { isFirstParty: true }),
+    bedrock('anthropic.claude-haiku-4.5-v1', 'AWS Bedrock', 1.00, 5.00),
+  ],
+  'anthropic/claude-sonnet-4.6': [
+    or('anthropic', undefined, 'Anthropic (via OR)', 3.00, 15.00, { isFirstParty: true }),
+    direct('anthropic', 'Anthropic (direct)', 2.40, 12.00, 'ANTHROPIC_KEY', { isFirstParty: true }),
+    bedrock('anthropic.claude-sonnet-4.6-v1', 'AWS Bedrock', 3.00, 15.00),
+  ],
+  'anthropic/claude-opus-4.7': [
+    or('anthropic', undefined, 'Anthropic (via OR)', 15.00, 75.00, { isFirstParty: true }),
+    direct('anthropic', 'Anthropic (direct)', 12.00, 60.00, 'ANTHROPIC_KEY', { isFirstParty: true }),
+  ],
+  'openai/gpt-5-mini': [
+    or('openai', undefined, 'OpenAI (via OR)', 0.30, 2.40, { isFirstParty: true }),
+    direct('openai', 'OpenAI (direct)', 0.24, 1.92, 'OPENAI_KEY', { isFirstParty: true }),
+    { slug: 'azure:openai-gpt-5-mini', router: 'azure', provider: 'openai', displayName: 'Azure OpenAI', inputPrice: 0.30, outputPrice: 2.40, requiresKey: 'AZURE_OPENAI_KEY', isPreview: true },
+  ],
+  'openai/gpt-5': [
+    or('openai', undefined, 'OpenAI (via OR)', 3.50, 14.00, { isFirstParty: true }),
+    direct('openai', 'OpenAI (direct)', 2.80, 11.20, 'OPENAI_KEY', { isFirstParty: true }),
+  ],
   'google/gemini-3-flash': [
-    { slug: 'google-ai-studio', displayName: 'Google AI Studio',       inputPrice: 0.30, outputPrice: 2.50, isFirstParty: true },
-    { slug: 'google-vertex',    displayName: 'Google Vertex',          inputPrice: 0.30, outputPrice: 2.50 },
+    or('google-ai-studio', undefined, 'Google AI Studio', 0.30, 2.50, { isFirstParty: true }),
+    or('google-vertex',    undefined, 'Google Vertex',    0.30, 2.50),
+    { slug: 'vertex:gemini-3-flash', router: 'vertex', provider: 'google', displayName: 'Vertex AI (direct)', inputPrice: 0.24, outputPrice: 2.00, requiresKey: 'GCP_APPLICATION_CREDENTIALS', isPreview: true, isFirstParty: true },
   ],
-  'x-ai/grok-4':                 [{ slug: 'xai',       displayName: 'xAI',             inputPrice: 5.00,  outputPrice: 15.00, isFirstParty: true }],
+  'x-ai/grok-4': [
+    or('xai', undefined, 'xAI (via OR)', 5.00, 15.00, { isFirstParty: true }),
+  ],
   'qwen/qwen-3-coder': [
-    { slug: 'qwen',        displayName: 'Qwen (first-party)',          inputPrice: 0.30, outputPrice: 1.20, isFirstParty: true },
-    { slug: 'together',    displayName: 'Together',                    inputPrice: 0.35, outputPrice: 1.40 },
-    { slug: 'deepinfra',   displayName: 'DeepInfra',                   inputPrice: 0.32, outputPrice: 1.28 },
-    { slug: 'fireworks',   displayName: 'Fireworks',                   inputPrice: 0.35, outputPrice: 1.40 },
+    or('qwen',      undefined, 'Qwen (first-party)', 0.30, 1.20, { isFirstParty: true }),
+    or('together',  undefined, 'Together',           0.35, 1.40),
+    or('deepinfra', undefined, 'DeepInfra',          0.32, 1.28),
+    or('fireworks', undefined, 'Fireworks',          0.35, 1.40),
+    direct('together', 'Together (direct)', 0.28, 1.12, 'TOGETHER_KEY'),
   ],
   'meta-llama/llama-4-scout': [
-    { slug: 'groq',        displayName: 'Groq',                        inputPrice: 0.25, outputPrice: 0.75 },
-    { slug: 'fireworks',   displayName: 'Fireworks',                   inputPrice: 0.28, outputPrice: 0.85 },
-    { slug: 'together',    displayName: 'Together',                    inputPrice: 0.30, outputPrice: 0.90 },
-    { slug: 'deepinfra',   displayName: 'DeepInfra',                   inputPrice: 0.28, outputPrice: 0.85 },
-    { slug: 'aws-bedrock', displayName: 'AWS Bedrock',                 inputPrice: 0.35, outputPrice: 1.05 },
+    or('groq',       undefined, 'Groq',       0.25, 0.75),
+    or('fireworks',  undefined, 'Fireworks',  0.28, 0.85),
+    or('together',   undefined, 'Together',   0.30, 0.90),
+    or('deepinfra',  undefined, 'DeepInfra',  0.28, 0.85),
+    or('aws-bedrock',undefined, 'AWS Bedrock (via OR)', 0.35, 1.05),
+    bedrock('meta.llama-4-scout-v1', 'AWS Bedrock (direct)', 0.30, 0.90),
   ],
   'mistralai/mistral-large-2': [
-    { slug: 'mistral',     displayName: 'Mistral (first-party)',       inputPrice: 2.00, outputPrice: 6.00, isFirstParty: true },
-    { slug: 'together',    displayName: 'Together',                    inputPrice: 2.10, outputPrice: 6.20 },
+    or('mistral',  undefined, 'Mistral (first-party)', 2.00, 6.00, { isFirstParty: true }),
+    or('together', undefined, 'Together',              2.10, 6.20),
+    direct('mistral', 'Mistral (direct)', 1.60, 4.80, 'MISTRAL_KEY', { isFirstParty: true }),
   ],
 };
 
-// Fallback host for models we haven't cataloged: single default OR-routed host with model's list price.
-export function getHosts(modelSlug: string): Host[] {
-  const cataloged = HOSTS_BY_MODEL[modelSlug];
+// Fallback destination for models we haven't cataloged: single OR-routed lane with model's list price.
+export function getDestinations(modelSlug: string): Destination[] {
+  const cataloged = DESTINATIONS_BY_MODEL[modelSlug];
   if (cataloged) return cataloged;
   const m = ALL_MODELS.find((x) => x.slug === modelSlug);
   if (!m) return [];
-  return [{ slug: 'or-routed', displayName: 'OR (auto-routed)', inputPrice: m.inputPrice, outputPrice: m.outputPrice }];
+  return [or(m.slug.split('/')[0], undefined, 'OR (auto-routed)', m.inputPrice, m.outputPrice)];
+}
+
+export function isDestinationAvailable(d: Destination): boolean {
+  if (d.router === 'openrouter') return ENV_KEYS_PRESENT.OR_KEY;
+  if (!d.requiresKey) return true;
+  return !!ENV_KEYS_PRESENT[d.requiresKey];
 }
 
 // Persist across screens

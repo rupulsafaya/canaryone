@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useStore, parseLane } from '../state/store.js';
-import { ALL_MODELS, getHosts, P50_RUN_SECONDS } from '../data/fixtures.js';
+import { ALL_MODELS, getDestinations, P50_RUN_SECONDS } from '../data/fixtures.js';
 import { SCREEN_ACCENT, familyColor, CELL_COLOR, CELL_GLYPH } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 
@@ -59,7 +59,7 @@ export function LiveProgress() {
     >
       {/* Header row */}
       <Box flexShrink={0}>
-        <Box width={34}><Text color="magenta" bold>Lane (Model · Host)</Text></Box>
+        <Box width={40}><Text color="magenta" bold>Lane (Model · Destination [router])</Text></Box>
         {includedTasks.map((t) => (
           <Box key={t.id} width={4}><Text color="gray" bold>{t.id}</Text></Box>
         ))}
@@ -72,9 +72,9 @@ export function LiveProgress() {
       <Box flexShrink={0}><Text color="gray" dimColor>{'─'.repeat(90)}</Text></Box>
 
       {laneKeys.map((lane) => {
-        const { model: modelSlug, host: hostSlug } = parseLane(lane);
+        const { model: modelSlug, dest: destSlug } = parseLane(lane);
         const model = ALL_MODELS.find((m) => m.slug === modelSlug)!;
-        const host = getHosts(modelSlug).find((h) => h.slug === hostSlug);
+        const dest = getDestinations(modelSlug).find((d) => d.slug === destSlug);
         const laneCells = cells[lane] ?? {};
         const passed = includedTasks.filter((t) => laneCells[t.id]?.state === 'passed').length;
         const attempted = includedTasks.filter((t) => ['passed', 'failed', 'error'].includes(laneCells[t.id]?.state ?? '')).length;
@@ -84,11 +84,12 @@ export function LiveProgress() {
         const etaLane = running ? P50_RUN_SECONDS * (queued + 1) : queued * P50_RUN_SECONDS;
         return (
           <Box key={lane} flexShrink={0}>
-            <Box width={34}>
+            <Box width={40}>
               <Text color={familyColor(model.family)} bold>● </Text>
-              <Text color={familyColor(model.family)}>{truncate(model.displayName, 16)}</Text>
+              <Text color={familyColor(model.family)}>{truncate(model.displayName, 14)}</Text>
               <Text color="gray"> · </Text>
-              <Text color="magenta">{truncate(host?.displayName ?? hostSlug, 10)}</Text>
+              <Text color="magenta">{truncate(dest?.displayName ?? destSlug, 14)}</Text>
+              <Text color="#22d3ee" dimColor> [{dest?.router ?? 'or'}]</Text>
             </Box>
             {includedTasks.map((t) => {
               const cell = laneCells[t.id];

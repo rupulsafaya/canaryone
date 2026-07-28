@@ -1,28 +1,29 @@
 import { create } from 'zustand';
-import { TASKS, ALL_MODELS, Task, Cell, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS, getHosts } from '../data/fixtures.js';
+import { TASKS, ALL_MODELS, Task, Cell, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS, getDestinations, isDestinationAvailable } from '../data/fixtures.js';
 
-export type Screen = 'onboarding' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'pickHosts' | 'confirm' | 'liveProgress';
+export type Screen = 'onboarding' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'pickDestinations' | 'confirm' | 'liveProgress';
 
-// A "lane" is one (model, host) tuple we run tasks against. Each lane is a row in LiveProgress.
-export type LaneKey = string; // encoded as `${modelSlug}::${hostSlug}`
-export const laneKey = (model: string, host: string): LaneKey => `${model}::${host}`;
-export const parseLane = (key: LaneKey): { model: string; host: string } => {
-  const [model, host] = key.split('::');
-  return { model, host };
+// A lane = one (model, destination) tuple we test. Each lane is a row in LiveProgress.
+// Destination slug already encodes (router, provider), so lane key = `${modelSlug}@${destSlug}`.
+export type LaneKey = string;
+export const laneKey = (model: string, dest: string): LaneKey => `${model}@${dest}`;
+export const parseLane = (key: LaneKey): { model: string; dest: string } => {
+  const at = key.indexOf('@');
+  return { model: key.slice(0, at), dest: key.slice(at + 1) };
 };
 
 type State = {
   screen: Screen;
   cwd: string;
-  onboardingStep: number; // 0..4
+  onboardingStep: number;
   tasks: Task[];
-  selectedModels: Set<string>;                  // model slugs
-  selectedHosts: Record<string, Set<string>>;   // modelSlug -> Set<hostSlug>
+  selectedModels: Set<string>;                            // model slugs
+  selectedDestinations: Record<string, Set<string>>;      // modelSlug -> Set<destSlug>
   repeats: number;
   parallelism: number;
   maxSpend: number;
   focusedTaskId: string | null;
-  cells: Record<LaneKey, Record<string, Cell>>; // lane -> task.id -> cell
+  cells: Record<LaneKey, Record<string, Cell>>;           // lane -> task.id -> cell
   runStartedAt: number | null;
   runFinishedAt: number | null;
   totalSpend: number;
@@ -31,7 +32,7 @@ type State = {
   toggleTask: (id: string) => void;
   selectAllTasks: (v: boolean) => void;
   toggleModel: (slug: string) => void;
-  toggleHost: (modelSlug: string, hostSlug: string) => void;
+  toggleDestination: (modelSlug: string, destSlug: string) => void;
   setFocusedTask: (id: string | null) => void;
   setMaxSpend: (v: number) => void;
   lanes: () => LaneKey[];
@@ -40,10 +41,18 @@ type State = {
   reset: () => void;
 };
 
-// Auto-select the first host for a newly-selected model so there's always ≥1 lane.
-function defaultHostsFor(modelSlug: string): Set<string> {
-  const hosts = getHosts(modelSlug);
-  return new Set(hosts.length ? [hosts[0].slug] : []);
+// When a model is toggled ON, auto-select a default destination:
+//   1) an AVAILABLE first-party destination if present
+//   2) else the first AVAILABLE destination
+//   3) else the first destination (probably a preview, user will see it flagged)
+function defaultDestinationFor(modelSlug: string): Set<string> {
+  const destinations = getDestinations(modelSlug);
+  if (!destinations.length) return new Set();
+  const availableFirstParty = destinations.find((d) => d.isFirstParty && isDestinationAvailable(d));
+  if (availableFirstParty) return new Set([availableFirstParty.slug]);
+  const anyAvailable = destinations.find(isDestinationAvailable);
+  if (anyAvailable) return new Set([anyAvailable.slug]);
+  return new Set([destinations[0].slug]);
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -52,10 +61,10 @@ export const useStore = create<State>((set, get) => ({
   onboardingStep: 0,
   tasks: TASKS,
   selectedModels: new Set(['anthropic/claude-haiku-4.5', 'deepseek/deepseek-v4-flash', 'z-ai/glm-5.2']),
-  selectedHosts: {
-    'anthropic/claude-haiku-4.5': new Set(['anthropic']),
-    'deepseek/deepseek-v4-flash': new Set(['baidu']),
-    'z-ai/glm-5.2': new Set(['baseten/fp8']),
+  selectedDestinations: {
+    'anthropic/claude-haiku-4.5': new Set(['openrouter:anthropic']),
+    'deepseek/deepseek-v4-flash': new Set(['openrouter:baidu']),
+    'z-ai/glm-5.2':               new Set(['openrouter:baseten/fp8']),
   },
   repeats: 3,
   parallelism: 3,
@@ -73,21 +82,21 @@ export const useStore = create<State>((set, get) => ({
   selectAllTasks: (v) => set((s) => ({ tasks: s.tasks.map((t) => ({ ...t, included: v })) })),
   toggleModel: (slug) => set((s) => {
     const nextModels = new Set(s.selectedModels);
-    const nextHosts = { ...s.selectedHosts };
+    const nextDests = { ...s.selectedDestinations };
     if (nextModels.has(slug)) {
       nextModels.delete(slug);
-      delete nextHosts[slug];
+      delete nextDests[slug];
     } else {
       nextModels.add(slug);
-      if (!nextHosts[slug]) nextHosts[slug] = defaultHostsFor(slug);
+      if (!nextDests[slug]) nextDests[slug] = defaultDestinationFor(slug);
     }
-    return { selectedModels: nextModels, selectedHosts: nextHosts };
+    return { selectedModels: nextModels, selectedDestinations: nextDests };
   }),
-  toggleHost: (modelSlug, hostSlug) => set((s) => {
-    const cur = new Set(s.selectedHosts[modelSlug] ?? []);
-    if (cur.has(hostSlug)) cur.delete(hostSlug);
-    else cur.add(hostSlug);
-    return { selectedHosts: { ...s.selectedHosts, [modelSlug]: cur } };
+  toggleDestination: (modelSlug, destSlug) => set((s) => {
+    const cur = new Set(s.selectedDestinations[modelSlug] ?? []);
+    if (cur.has(destSlug)) cur.delete(destSlug);
+    else cur.add(destSlug);
+    return { selectedDestinations: { ...s.selectedDestinations, [modelSlug]: cur } };
   }),
   setFocusedTask: (id) => set({ focusedTaskId: id }),
   setMaxSpend: (v) => set({ maxSpend: v }),
@@ -95,8 +104,8 @@ export const useStore = create<State>((set, get) => ({
     const s = get();
     const out: LaneKey[] = [];
     for (const model of s.selectedModels) {
-      const hosts = s.selectedHosts[model] ?? new Set<string>();
-      for (const host of hosts) out.push(laneKey(model, host));
+      const dests = s.selectedDestinations[model] ?? new Set<string>();
+      for (const dest of dests) out.push(laneKey(model, dest));
     }
     return out;
   },
@@ -111,7 +120,6 @@ export const useStore = create<State>((set, get) => ({
         cells[lane][task.id] = { state: 'queued', costUsd: 0, latencyMs: 0 };
       }
     }
-    // Mock a report path (real: written on completion)
     const stamp = '2026-07-28T09-30-00Z';
     set({
       screen: 'liveProgress',
@@ -131,24 +139,20 @@ export const useStore = create<State>((set, get) => ({
 
     const cells = { ...s.cells };
     let totalSpend = s.totalSpend;
-    let anyActive = false;
 
     for (const lane of lanes) {
-      const { model, host } = parseLane(lane);
+      const { model, dest } = parseLane(lane);
       const modelObj = ALL_MODELS.find((m) => m.slug === model);
-      const hostObj = getHosts(model).find((h) => h.slug === host);
+      const destObj = getDestinations(model).find((d) => d.slug === dest);
       if (!modelObj) continue;
-      const inPrice = hostObj?.inputPrice ?? modelObj.inputPrice;
-      const outPrice = hostObj?.outputPrice ?? modelObj.outputPrice;
+      const inPrice = destObj?.inputPrice ?? modelObj.inputPrice;
+      const outPrice = destObj?.outputPrice ?? modelObj.outputPrice;
 
       const laneCells = { ...cells[lane] };
       let running = includedTasks.find((t) => laneCells[t.id].state === 'running');
       if (!running) {
         const next = includedTasks.find((t) => laneCells[t.id].state === 'queued');
-        if (next) {
-          laneCells[next.id] = { state: 'running', costUsd: 0, latencyMs: 0 };
-          anyActive = true;
-        }
+        if (next) laneCells[next.id] = { state: 'running', costUsd: 0, latencyMs: 0 };
       } else {
         const inputCost = (BASELINE_INPUT_TOKENS / 1_000_000) * inPrice;
         const outputCost = (BASELINE_OUTPUT_TOKENS / 1_000_000) * outPrice;
@@ -158,15 +162,10 @@ export const useStore = create<State>((set, get) => ({
           h % 13 === 0 ? 'error' : h % 7 === 0 ? 'failed' : 'passed';
         laneCells[running.id] = { state: outcome, costUsd: cost, latencyMs: P50_RUN_SECONDS * 1000 };
         totalSpend += cost;
-        anyActive = true;
       }
       cells[lane] = laneCells;
-      if (includedTasks.some((t) => laneCells[t.id].state === 'queued' || laneCells[t.id].state === 'running')) {
-        anyActive = true;
-      }
     }
 
-    // Check terminal state: everything done means no queued and no running anywhere
     const done = lanes.every((lane) =>
       includedTasks.every((t) => {
         const st = cells[lane][t.id].state;
