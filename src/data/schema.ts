@@ -82,7 +82,10 @@ export const ProbedDirSchema = z.object({
 export type ProbedDir = z.infer<typeof ProbedDirSchema>;
 
 export const ScanSchema = z.object({
-  version: z.literal('0.0'),
+  // 0.1: added `suggestedGlob` and nested-tests fallback. Bumped from 0.0
+  // so pre-existing caches (which used shallow-only probing) get invalidated
+  // and auto-rescanned instead of silently returning null for the glob.
+  version: z.literal('0.1'),
   scannedAt: z.string(),
   fingerprint: z.object({
     packageJsonMtime: z.number().nullable(),

@@ -82,7 +82,7 @@ async function writeScanCache(
 ): Promise<void> {
   const now = new Date().toISOString();
   const payload: Scan = {
-    version: '0.0',
+    version: '0.1',
     scannedAt: now,
     fingerprint,
     runners: scan.runners,
