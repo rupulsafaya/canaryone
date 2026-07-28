@@ -1,15 +1,17 @@
 import { create } from 'zustand';
 import { TASKS, ALL_MODELS, Task, Cell, BASELINE_INPUT_TOKENS, BASELINE_OUTPUT_TOKENS, JUDGE_COST_PER_TASK, P50_RUN_SECONDS, getDestinations, isDestinationAvailable } from '../data/fixtures.js';
-import type { Config, ORKeySource, OrCatalog } from '../data/schema.js';
+import type { Config, MethodologyReport, ORKeySource, OrCatalog } from '../data/schema.js';
 import type { DeterministicScan } from '../scan/deterministic.js';
 import type { MatchedFile } from '../scan/glob.js';
 import { loadOrCatalog, fetchModelEndpoints, readCachedEndpoints } from '../scan/or-catalog.js';
 import { detectOrKey, writeConfig } from './../scan/orchestrator.js';
+import { runMethodology, isMethodologyFresh } from '../scan/methodology.js';
 
 export type CatalogStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type EndpointStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type MethodologyStatus = 'idle' | 'loading' | 'ready' | 'blocked' | 'error';
 
-export type Screen = 'keySetup' | 'onboarding' | 'summarizeTasks' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'pickDestinations' | 'confirm' | 'liveProgress';
+export type Screen = 'keySetup' | 'onboarding' | 'summarizeTasks' | 'methodologyCheck' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'pickDestinations' | 'confirm' | 'liveProgress';
 
 // A lane = one (model, destination) tuple we test. Each lane is a row in LiveProgress.
 // Destination slug already encodes (router, provider), so lane key = `${modelSlug}@${destSlug}`.
@@ -26,11 +28,15 @@ type State = {
   targetDir: string;
   configDir: string;
   forceRescan: boolean;
+  forceRescanMethodology: boolean;
   scanResult: DeterministicScan | null;
   config: Config | null;
   orKeyPresent: boolean;
   orKeySource: ORKeySource | null;
   matchedFiles: MatchedFile[];
+  methodology: MethodologyReport | null;
+  methodologyStatus: MethodologyStatus;
+  methodologyError: string | null;
   orCatalog: OrCatalog | null;
   orCatalogStatus: CatalogStatus;
   orCatalogError: string | null;
@@ -54,6 +60,7 @@ type State = {
   setConfig: (c: Config) => void;
   setOrKey: (present: boolean, source: ORKeySource | null) => void;
   setMatchedFiles: (files: MatchedFile[]) => void;
+  loadMethodology: (force?: boolean) => Promise<void>;
   loadCatalog: (force?: boolean) => Promise<void>;
   loadEndpointsFor: (slugs: string[], force?: boolean) => Promise<void>;
   persistTaskSelection: () => Promise<void>;
@@ -92,11 +99,15 @@ export const useStore = create<State>((set, get) => ({
   targetDir: process.cwd(),
   configDir: process.cwd() + '/.c1',
   forceRescan: false,
+  forceRescanMethodology: false,
   scanResult: null,
   config: null,
   orKeyPresent: false,
   orKeySource: null,
   matchedFiles: [],
+  methodology: null,
+  methodologyStatus: 'idle',
+  methodologyError: null,
   orCatalog: null,
   orCatalogStatus: 'idle',
   orCatalogError: null,
@@ -120,6 +131,47 @@ export const useStore = create<State>((set, get) => ({
   setConfig: (c) => { set({ config: c }); get().applyConfigToTasks(); },
   setOrKey: (present, source) => set({ orKeyPresent: present, orKeySource: source }),
   setMatchedFiles: (files) => set({ matchedFiles: files }),
+  loadMethodology: async (force = false) => {
+    const s = get();
+    if (s.methodologyStatus === 'loading') return;
+    // Cache: if config carries a fresh methodology and no rescan requested,
+    // hydrate it into state without recomputing.
+    if (!force && s.config?.methodology) {
+      const fresh = await isMethodologyFresh(s.config.methodology, s.targetDir);
+      if (fresh) {
+        const state = s.config.methodology.state;
+        const nextStatus: MethodologyStatus =
+          state === 'sdk-env' || state === 'sdk-config' ? 'ready' : 'blocked';
+        set({ methodology: s.config.methodology, methodologyStatus: nextStatus, methodologyError: null });
+        return;
+      }
+    }
+    if (!s.matchedFiles.length) {
+      set({ methodologyStatus: 'error', methodologyError: 'No matched test files to scan.' });
+      return;
+    }
+    set({ methodologyStatus: 'loading', methodologyError: null });
+    try {
+      const { report } = await runMethodology({
+        testFiles: s.matchedFiles,
+        targetDir: s.targetDir,
+      });
+      // Persist onto config.
+      if (s.config) {
+        const nextConfig = { ...s.config, methodology: report, updatedAt: new Date().toISOString() };
+        try { await writeConfig(s.configDir, nextConfig); } catch { /* non-fatal */ }
+        set({ config: nextConfig });
+      }
+      const nextStatus: MethodologyStatus =
+        report.state === 'sdk-env' || report.state === 'sdk-config' ? 'ready' : 'blocked';
+      set({ methodology: report, methodologyStatus: nextStatus, methodologyError: null });
+    } catch (e) {
+      set({
+        methodologyStatus: 'error',
+        methodologyError: e instanceof Error ? e.message : String(e),
+      });
+    }
+  },
   loadCatalog: async (force = false) => {
     const s = get();
     if (s.orCatalogStatus === 'loading') return;

@@ -43,7 +43,7 @@ export function SummarizeTasks() {
       }
       if (matchedFiles.length === 0) {
         // Nothing to summarize; advance immediately.
-        goTo('pickTasks');
+        goTo('methodologyCheck');
         return;
       }
       try {
@@ -100,11 +100,11 @@ export function SummarizeTasks() {
     }
     if (mode === 'error') {
       if (input === 'q' || key.escape) process.exit(1);
-      if (input === 's') goTo('pickTasks'); // skip forward with empty summaries
+      if (input === 's') goTo('methodologyCheck'); // skip forward with empty summaries
       return;
     }
     // done or partial
-    if (key.return) goTo('pickTasks');
+    if (key.return) goTo('methodologyCheck');
     else if (input === 'q' || key.escape) process.exit(0);
   });
 

@@ -5,6 +5,7 @@ import { spawnTui, runTests } from './tui-harness.mjs';
 
 const TARGET_REAL = path.join(os.homedir(), 'Documents/GitHub/job-search-automation');
 const HOME_ENV = path.join(os.homedir(), '.c1/.env');
+const FIXTURES_DIR = new URL('./fixtures/', import.meta.url).pathname;
 
 async function withScratchDir(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'c1-test-'));
@@ -296,6 +297,54 @@ tests.push(['J. Confirm: renders with lanes, correct parallel wall-clock', async
       await t.waitFor(/claude-haiku-4\.5/, 3000);
       t.send('q');
       await t.waitExit(3000);
+    } finally { t.kill(); }
+  });
+}]);
+
+// --- Scenario K: MethodologyCheck auto-advances on sdk-env fixture ---
+tests.push(['K. MethodologyCheck: sdk-env fixture auto-advances into PickTasks', async () => {
+  const target = path.join(FIXTURES_DIR, 'sdk-env-repo');
+  await withScratchDir(async (scratchDir) => {
+    const t = spawnTui(['--start', 'onboarding', '--config-dir', scratchDir, '--target', target], { clearAuth: false });
+    try {
+      await t.waitFor('scan complete', 10000);
+      t.sendKey('enter');                                    // accept onboarding → SummarizeTasks
+      await t.waitFor(/summarized|all summaries ready/, 60000);   // Haiku summarize done
+      t.reset();
+      t.sendKey('enter');                                    // advance → MethodologyCheck
+      await t.waitFor(/canaryone.*Methodology/, 5000);
+      await t.waitFor(/✓ Detected/, 60000);                  // ready state renders
+      await t.waitFor(/Pick tasks/, 5000);                   // auto-advance 800ms later
+      t.send('q');
+      await t.waitExit(3000);
+    } finally { t.kill(); }
+  });
+}]);
+
+// --- Scenario L: MethodologyCheck blocks on hardcoded fixture ---
+tests.push(['L. MethodologyCheck: hardcoded fixture blocks with file/line + suggested env var', async () => {
+  const target = path.join(FIXTURES_DIR, 'hardcoded-repo');
+  await withScratchDir(async (scratchDir) => {
+    const t = spawnTui(['--start', 'onboarding', '--config-dir', scratchDir, '--target', target], { clearAuth: false });
+    try {
+      await t.waitFor('scan complete', 10000);
+      t.sendKey('enter');
+      await t.waitFor(/summarized|all summaries ready/, 60000);
+      t.reset();
+      t.sendKey('enter');
+      await t.waitFor(/canaryone.*Methodology/, 5000);
+      // Match the block screen's specific heading (avoids matching 'hardcoded' inside Haiku summaries).
+      await t.waitFor(/base URL is hardcoded/, 60000);
+      // Verify the block screen shows either the offending URL or a suggested env var swap.
+      await t.waitFor(/api\.groq\.com|OPENAI_BASE_URL|process\.env/, 5000);
+      // Enter is disabled — verify we can NOT advance.
+      t.sendKey('enter');
+      await t.sleep(500);
+      const screen = t.screen();
+      if (/Pick tasks/.test(screen)) throw new Error('advanced despite sdk-hardcoded block');
+      t.send('q');
+      await t.waitExit(3000);
+      if (t.exitCode() !== 1) throw new Error(`expected exit 1 from hardcoded-block quit, got ${t.exitCode()}`);
     } finally { t.kill(); }
   });
 }]);

@@ -12,10 +12,11 @@ const cli = meow(
     $ c1 [flags]
 
   Flags
-    --target <dir>       target repo (default: cwd)
-    --config-dir <dir>   where .c1/ lives (default: <target>/.c1)
-    --rescan             force re-run of deterministic scan
-    --start <screen>     jump straight to a screen (onboarding|pickTasks|taskDetail|pickModels|pickDestinations|confirm|liveProgress)
+    --target <dir>              target repo (default: cwd)
+    --config-dir <dir>          where .c1/ lives (default: <target>/.c1)
+    --rescan                    force re-run of deterministic scan
+    --rescan-methodology        force re-run of methodology detection (bypasses cache)
+    --start <screen>            jump straight to a screen (onboarding|summarizeTasks|methodologyCheck|pickTasks|taskDetail|pickModels|pickDestinations|confirm|liveProgress)
     --help
   `,
   {
@@ -24,6 +25,7 @@ const cli = meow(
       target: { type: 'string' },
       configDir: { type: 'string' },
       rescan: { type: 'boolean', default: false },
+      rescanMethodology: { type: 'boolean', default: false },
       start: { type: 'string' },
     },
   },
@@ -33,10 +35,16 @@ const targetDir = path.resolve(cli.flags.target ?? process.cwd());
 const configDir = path.resolve(
   cli.flags.configDir ?? process.env.C1_CONFIG_DIR ?? path.join(targetDir, '.c1'),
 );
-useStore.setState({ targetDir, configDir, cwd: targetDir, forceRescan: cli.flags.rescan });
+useStore.setState({
+  targetDir,
+  configDir,
+  cwd: targetDir,
+  forceRescan: cli.flags.rescan,
+  forceRescanMethodology: cli.flags.rescanMethodology,
+});
 
 if (cli.flags.start) {
-  const valid = ['keySetup', 'onboarding', 'summarizeTasks', 'pickTasks', 'taskDetail', 'pickModels', 'pickDestinations', 'confirm', 'liveProgress'] as const;
+  const valid = ['keySetup', 'onboarding', 'summarizeTasks', 'methodologyCheck', 'pickTasks', 'taskDetail', 'pickModels', 'pickDestinations', 'confirm', 'liveProgress'] as const;
   if (valid.includes(cli.flags.start as any)) {
     // Downstream screens need pre-populated selection to have anything to
     // render. Seed the demo/fixture selection so `--start pickDestinations`

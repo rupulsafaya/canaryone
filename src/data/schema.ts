@@ -6,6 +6,34 @@ export const ORKeySourceSchema = z.enum([
 ]);
 export type ORKeySource = z.infer<typeof ORKeySourceSchema>;
 
+export const MethodologyStateSchema = z.enum([
+  'sdk-env',
+  'sdk-config',
+  'sdk-hardcoded',
+  'no-sdk-detected',
+]);
+export type MethodologyState = z.infer<typeof MethodologyStateSchema>;
+
+export const MethodologyHardcodedSiteSchema = z.object({
+  file: z.string(),
+  line: z.number().nullable(),
+  literal: z.string(),
+  suggestedEnvVar: z.string(),
+});
+export type MethodologyHardcodedSite = z.infer<typeof MethodologyHardcodedSiteSchema>;
+
+export const MethodologyReportSchema = z.object({
+  state: MethodologyStateSchema,
+  primarySdk: z.string().nullable(),
+  otherSdks: z.array(z.string()),
+  evidence: z.string(),
+  hardcodedSites: z.array(MethodologyHardcodedSiteSchema).optional(),
+  followedFiles: z.array(z.string()),
+  scannedAt: z.string(),
+  model: z.string(),
+});
+export type MethodologyReport = z.infer<typeof MethodologyReportSchema>;
+
 export const ConfigSchema = z.object({
   version: z.literal('0.0'),
   targetDir: z.string(),
@@ -30,6 +58,7 @@ export const ConfigSchema = z.object({
       model: z.string(),
     })).optional(),
   }),
+  methodology: MethodologyReportSchema.optional(),
   orKey: z.object({
     source: ORKeySourceSchema,
   }),

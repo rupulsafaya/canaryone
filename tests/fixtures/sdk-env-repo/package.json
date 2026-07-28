@@ -1,0 +1,9 @@
+{
+  "name": "c1-fixture-sdk-env-repo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/"
+  }
+}
