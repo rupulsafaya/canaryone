@@ -7,6 +7,7 @@ import { ALL_MODELS, getDestinations, P50_RUN_SECONDS } from '../data/fixtures.j
 import { SCREEN_ACCENT, familyColor, CELL_COLOR, CELL_GLYPH } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 import type { OrCatalog, OrEndpoint } from '../data/schema.js';
+import { fmtDollars, fmtDuration } from '../lib/fmt.js';
 
 function openInFileManager(dir: string): void {
   // macOS: `open`; Linux: `xdg-open`; Windows: `explorer`. spawn is fire-and-forget.
@@ -59,21 +60,6 @@ const COLS = {
 const TOTAL_WIDTH = (nTasks: number) =>
   COLS.model + COLS.dest + COLS.router + nTasks * COLS.taskCell +
   2 + COLS.pass + COLS.spend + COLS.costPer + COLS.eta;
-
-// Format a $ amount at the right precision for whatever scale the value is at:
-//   ≥ 1        → $1.23
-//   ≥ 0.01     → $0.0123
-//   ≥ 0.0001   → $0.000123
-//   else       → $0.00e-7 (fallback for anything below $10^-6)
-//   0          → $0
-function fmtDollars(v: number): string {
-  if (!v) return '$0';
-  const abs = Math.abs(v);
-  if (abs >= 1)      return `$${v.toFixed(2)}`;
-  if (abs >= 0.01)   return `$${v.toFixed(4)}`;
-  if (abs >= 0.0001) return `$${v.toFixed(6)}`;
-  return `$${v.toExponential(2)}`;
-}
 
 function familyFromSlug(slug: string): string {
   const prefix = slug.split('/')[0]?.toLowerCase() ?? 'other';
@@ -264,10 +250,4 @@ function shortRouter(r: string | undefined) {
 }
 function routerTagColor(r: string | undefined) {
   return r === 'direct' ? '#a78bfa' : r === 'bedrock' ? '#f97316' : r === 'vertex' ? '#4ade80' : r === 'azure' ? '#60a5fa' : '#22d3ee';
-}
-function fmtDuration(sec: number) {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  if (m > 0) return `${m}m${s.toString().padStart(2, '0')}s`;
-  return `${s}s`;
 }

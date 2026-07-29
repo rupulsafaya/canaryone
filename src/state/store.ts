@@ -390,6 +390,10 @@ export const useStore = create<State>((set, get) => ({
       tasks: taskSpecs,
       orKey: detected.value,
       runnerCmd: s.config.runner.cmd,
+      // Ink owns stdout while LiveProgress is rendered — the summary would
+      // interleave with the alternate-screen buffer. Post-run review goes
+      // through `c1 runs summary <runId>` (headless-only) instead.
+      printSummary: false,
     };
 
     engine.bus.on('session:running', (u) => applyCellUpdate(u));

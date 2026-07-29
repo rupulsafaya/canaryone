@@ -12,6 +12,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
@@ -70,7 +71,13 @@ async function main() {
     orKey,
     runnerCmd: 'npm test',        // resolved via package.json:scripts at spawn
     sessionTimeoutMs: 60_000,
+    // Route the ASCII summary into a buffer so we can grep-assert it.
+    summaryStream: null,   // set below
   };
+  const summaryChunks = [];
+  spec.summaryStream = new Writable({
+    write(chunk, _enc, cb) { summaryChunks.push(chunk.toString()); cb(); },
+  });
 
   console.log('[integration] runId =', runId);
   console.log('[integration] scratch =', scratch);
@@ -153,6 +160,15 @@ async function main() {
     throw new Error(`expected trajectory_score integer 0-100, got ${trajectoryScore}`);
   }
   console.log('[integration] verdict: outcome=' + outcomeRow.value + ' trajectory=' + trajectoryScore);
+
+  // ---------- summary printout (J8) ----------
+  const summary = summaryChunks.join('');
+  console.log('[integration] summary bytes:', summary.length);
+  if (!summary.includes('Run complete')) throw new Error('summary missing "Run complete" header');
+  if (!summary.includes(runId.slice(0, 8))) throw new Error(`summary missing runId short prefix ${runId.slice(0, 8)}`);
+  if (!summary.includes('Best value:')) throw new Error('summary missing "Best value:" line');
+  if (!summary.includes('openrouter:openai')) throw new Error('summary missing fixture lane openrouter:openai');
+  if (!summary.includes('Traj')) throw new Error('summary missing Traj column header');
 
   // Session MD exists
   const sessionsDir = path.join(runDir, 'sessions');

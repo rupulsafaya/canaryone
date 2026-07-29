@@ -19,6 +19,7 @@ import { runSession, taskFileInWorktree } from './subprocess.js';
 import { RunEventBus, type SessionKey, type CellUpdate, type CellState } from './event-bus.js';
 import { JudgeWorkerPool } from '../judge/worker.js';
 import { captureGitDiff, type GitDiffSummary } from '../judge/git-diff.js';
+import { printRunSummary } from './print-summary.js';
 
 // Per-lane timeout ceiling from SPEC §13.4. Defaults to 6 min; per-lane overrides
 // come in a later milestone (D5+).
@@ -55,6 +56,14 @@ export interface RunSpec {
   judgeKey?: string;
   /** Set true to skip the judge entirely (used by tests that don't want to pay for Haiku). */
   disableJudge?: boolean;
+  /**
+   * Emit the ASCII run summary to stdout on completion. Defaults to true.
+   * TUI callers (Ink is mounted on stdout) must set this false and use
+   * `c1 runs summary <runId>` (or a bus subscription) for post-run review.
+   */
+  printSummary?: boolean;
+  /** Redirect the printed summary to a custom stream (used by tests). */
+  summaryStream?: NodeJS.WritableStream;
 }
 
 export interface RunResult {
@@ -176,6 +185,13 @@ export class RunEngine {
     const finishedAt = new Date().toISOString();
     const status: SessionStatus = this.aborted ? 'aborted' : 'complete';
     db.updateRunStatus(spec.runId, status, finishedAt);
+
+    // Emit the ASCII run summary. Default on; TUI callers explicitly disable
+    // so it doesn't collide with Ink's alternate-screen output.
+    if (spec.printSummary !== false && !this.aborted) {
+      try { printRunSummary(spec.runId, spec.configDir, { stream: spec.summaryStream }); }
+      catch { /* summary is best-effort; don't fail the run */ }
+    }
     await log.append({
       ts: finishedAt, kind: 'session-end',
       run_id: spec.runId, session_id: null, step_id: null, step_ix: null,
