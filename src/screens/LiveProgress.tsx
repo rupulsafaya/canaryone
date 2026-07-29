@@ -9,12 +9,14 @@ import { Frame } from '../components/Frame.tsx';
 import type { OrCatalog, OrEndpoint } from '../data/schema.js';
 import { fmtDollars, fmtDuration } from '../lib/fmt.js';
 
-function openInFileManager(dir: string): void {
+function openInFileManager(target: string): void {
   // macOS: `open`; Linux: `xdg-open`; Windows: `explorer`. spawn is fire-and-forget.
+  // Also handles opening HTML files in the default browser — `open` on macOS
+  // routes .html to the default browser automatically.
   const platform = process.platform;
   const cmd = platform === 'darwin' ? 'open' : platform === 'win32' ? 'explorer' : 'xdg-open';
   try {
-    const child = spawn(cmd, [dir], { detached: true, stdio: 'ignore' });
+    const child = spawn(cmd, [target], { detached: true, stdio: 'ignore' });
     child.unref();
   } catch { /* silent — the artifact paths are printed onscreen too */ }
 }
@@ -83,6 +85,9 @@ export function LiveProgress() {
   const runId = useStore((s) => s.runId);
   const totalInputTokens = useStore((s) => s.totalInputTokens);
   const totalOutputTokens = useStore((s) => s.totalOutputTokens);
+  const reportHtmlPath = useStore((s) => s.reportHtmlPath);
+  const reportGenerating = useStore((s) => s.reportGenerating);
+  const reportError = useStore((s) => s.reportError);
 
   const runDir = runId ? path.join(configDir, 'runs', runId) : null;
 
@@ -102,8 +107,16 @@ export function LiveProgress() {
       if (input === 'q' || key.escape) { abortRun(); }
       return;
     }
-    // Post-run: `o` (or Enter) opens the run dir in the OS file manager.
-    if ((input === 'o' || key.return) && runDir) {
+    // Post-run:
+    //   enter / v → open the HTML report in the default browser (money-shot)
+    //   o         → open the run dir in the file manager
+    //   r         → run again
+    //   q / esc   → quit
+    if ((key.return || input === 'v') && reportHtmlPath) {
+      openInFileManager(reportHtmlPath);
+      return;
+    }
+    if (input === 'o' && runDir) {
       openInFileManager(runDir);
       return;
     }
@@ -131,7 +144,14 @@ export function LiveProgress() {
       footer={
         runFinishedAt ? (
           <Text color="gray">
-            <Text color="#22c55e" bold>DONE</Text> · <Text color="cyan">o</Text>/<Text color="cyan">enter</Text> open run dir · <Text color="cyan">r</Text> run again · <Text color="cyan">q</Text> quit
+            <Text color="#22c55e" bold>DONE</Text>
+            {' · '}
+            {reportGenerating
+              ? <><Text color="#eab308">generating report…</Text></>
+              : reportHtmlPath
+                ? <><Text color="cyan">enter</Text>/<Text color="cyan">v</Text> view report</>
+                : <Text color="gray" dimColor>report unavailable</Text>}
+            {' · '}<Text color="cyan">o</Text> open run dir · <Text color="cyan">r</Text> run again · <Text color="cyan">q</Text> quit
           </Text>
         ) : (
           <Text color="gray"><Text color="cyan">x</Text> abort · <Text color="cyan">q</Text> soft-stop</Text>
@@ -218,23 +238,46 @@ export function LiveProgress() {
       {runFinishedAt && runDir && (
         <Box marginTop={1} flexDirection="column" flexShrink={0}>
           <Text color="#22c55e" bold>Run complete.</Text>
-          <Box marginTop={0}>
+          {reportGenerating && (
+            <Box marginTop={0}>
+              <Text color="#eab308">⣾ generating HTML report… </Text>
+              <Text color="gray" dimColor>(inspecting traffic + SQLite)</Text>
+            </Box>
+          )}
+          {reportHtmlPath && (
+            <Box marginTop={0} flexDirection="column">
+              <Box>
+                <Text color="gray">Report: </Text>
+                <Text color="#22c55e" bold>{reportHtmlPath}</Text>
+              </Box>
+              <Box>
+                <Text color="gray">        Press </Text>
+                <Text color="cyan" bold>enter</Text>
+                <Text color="gray"> or </Text>
+                <Text color="cyan" bold>v</Text>
+                <Text color="gray"> to view in your browser.</Text>
+              </Box>
+            </Box>
+          )}
+          {reportError && !reportGenerating && (
+            <Box marginTop={0}>
+              <Text color="#ef4444">Report failed: </Text>
+              <Text color="gray">{reportError}</Text>
+            </Box>
+          )}
+          <Box marginTop={1}>
             <Text color="gray">Run dir: </Text>
-            <Text color="cyan" bold>{runDir}</Text>
+            <Text color="cyan">{runDir}</Text>
+            <Text color="gray" dimColor>  (press </Text>
+            <Text color="cyan">o</Text>
+            <Text color="gray" dimColor> to open in Finder)</Text>
           </Box>
-          <Box marginTop={0}>
-            <Text color="gray" dimColor>  traffic.jsonl · sessions/&lt;session_id&gt;.md · meta.json</Text>
+          <Box>
+            <Text color="gray" dimColor>  traffic.jsonl · sessions/&lt;session_id&gt;.md · meta.json · report/index.html</Text>
           </Box>
           <Box>
             <Text color="gray">SQLite: </Text>
             <Text color="cyan">{path.join(configDir, 'db.sqlite')}</Text>
-          </Box>
-          <Box marginTop={1}>
-            <Text color="gray">Press </Text>
-            <Text color="cyan" bold>o</Text>
-            <Text color="gray"> or </Text>
-            <Text color="cyan" bold>enter</Text>
-            <Text color="gray"> to open the run dir in Finder.</Text>
           </Box>
         </Box>
       )}

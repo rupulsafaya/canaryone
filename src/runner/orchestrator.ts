@@ -20,6 +20,7 @@ import { RunEventBus, type SessionKey, type CellUpdate, type CellState } from '.
 import { JudgeWorkerPool } from '../judge/worker.js';
 import { captureGitDiff, type GitDiffSummary } from '../judge/git-diff.js';
 import { printRunSummary } from './print-summary.js';
+import { generate as generateReport } from '../report/generate.js';
 
 // Per-lane timeout ceiling from SPEC §13.4. Defaults to 6 min; per-lane overrides
 // come in a later milestone (D5+).
@@ -64,6 +65,12 @@ export interface RunSpec {
   printSummary?: boolean;
   /** Redirect the printed summary to a custom stream (used by tests). */
   summaryStream?: NodeJS.WritableStream;
+  /**
+   * Auto-generate the HTML report at end of run. Defaults to true. Tests that
+   * don't want the ~100-300 ms overhead can set false; the report is still
+   * regenerable via `c1 runs report <runId>`.
+   */
+  generateReport?: boolean;
 }
 
 export interface RunResult {
@@ -201,6 +208,27 @@ export class RunEngine {
     if (spec.printSummary !== false && !this.aborted) {
       try { printRunSummary(spec.runId, spec.configDir, { stream: spec.summaryStream }); }
       catch { /* summary is best-effort; don't fail the run */ }
+    }
+
+    // Generate the HTML report. Fires 'report:generating' so LiveProgress can
+    // show a "generating…" indicator; 'report:generated' when the path is
+    // ready. Non-fatal on failure: run still emits 'run:complete'.
+    if (spec.generateReport !== false && !this.aborted) {
+      this.bus.emit('report:generating', {
+        runId: spec.runId, targetDir: spec.targetDir, totalSessions: sessions.length,
+      });
+      try {
+        const reportPath = await generateReport(spec.runId, spec.configDir);
+        this.bus.emit('report:generated', {
+          runId: spec.runId, targetDir: spec.targetDir,
+          totalSessions: sessions.length, path: reportPath,
+        });
+      } catch (e) {
+        this.bus.emit('report:failed', {
+          runId: spec.runId, targetDir: spec.targetDir, totalSessions: sessions.length,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
     await log.append({
       ts: finishedAt, kind: 'session-end',

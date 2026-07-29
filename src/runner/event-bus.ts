@@ -63,6 +63,12 @@ export type EventMap = {
    * instead of waiting on the judge's trailing Haiku calls.
    */
   'run:sessionsComplete': RunEvent & { totalCost: number };
+  /** HTML report generation started (post-judge-drain, pre-run:complete). */
+  'report:generating':    RunEvent;
+  /** HTML report finished writing; carries absolute path. */
+  'report:generated':     RunEvent & { path: string };
+  /** HTML report failed to generate; non-fatal — run:complete still fires. */
+  'report:failed':        RunEvent & { error: string };
   'run:complete':         RunEvent & { totalCost: number };
   'run:aborted':          RunEvent & { reason: string };
   'session:queued':       CellUpdate;

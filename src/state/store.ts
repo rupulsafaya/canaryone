@@ -60,6 +60,9 @@ type State = {
   totalInputTokens: number;
   totalOutputTokens: number;
   reportPath: string | null;
+  reportHtmlPath: string | null;   // absolute path to report/index.html when generated
+  reportGenerating: boolean;       // true between report:generating and report:generated/failed
+  reportError: string | null;
   runId: string | null;
   runError: string | null;
   engine: RunEngine | null;
@@ -137,6 +140,9 @@ export const useStore = create<State>((set, get) => ({
   totalInputTokens: 0,
   totalOutputTokens: 0,
   reportPath: null,
+  reportHtmlPath: null,
+  reportGenerating: false,
+  reportError: null,
   runId: null,
   runError: null,
   engine: null,
@@ -417,6 +423,13 @@ export const useStore = create<State>((set, get) => ({
     engine.bus.on('run:aborted', () => {
       set({ runFinishedAt: Date.now(), engine: null });
     });
+    engine.bus.on('report:generating', () => set({ reportGenerating: true }));
+    engine.bus.on('report:generated', (u) => set({
+      reportGenerating: false, reportHtmlPath: u.path, reportError: null,
+    }));
+    engine.bus.on('report:failed', (u) => set({
+      reportGenerating: false, reportHtmlPath: null, reportError: u.error,
+    }));
 
     set({
       screen: 'liveProgress',
@@ -427,6 +440,9 @@ export const useStore = create<State>((set, get) => ({
       totalInputTokens: 0,
       totalOutputTokens: 0,
       reportPath: `.c1/runs/${spec.runId}/`,
+      reportHtmlPath: null,
+      reportGenerating: false,
+      reportError: null,
       runId: spec.runId,
       runError: null,
       engine,
@@ -452,6 +468,9 @@ export const useStore = create<State>((set, get) => ({
     totalInputTokens: 0,
     totalOutputTokens: 0,
     reportPath: null,
+    reportHtmlPath: null,
+    reportGenerating: false,
+    reportError: null,
     runId: null,
     runError: null,
     engine: null,
