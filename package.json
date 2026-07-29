@@ -13,7 +13,8 @@
     "test:tui": "node tests/tui.test.mjs",
     "test:runner": "tsx tests/runner.test.mjs",
     "test:judge": "tsx tests/judge-trajectory.test.mjs",
-    "test:providers": "tsx tests/providers.test.mjs"
+    "test:providers": "tsx tests/providers.test.mjs",
+    "test:env-file": "tsx tests/env-file.test.mjs"
   },
   "engines": {
     "node": ">=22"
