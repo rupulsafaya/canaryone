@@ -20,6 +20,7 @@ export function PickTasks() {
   const hasClassifier = tasks.length > 0 && tasks.some((t) => t.source !== 'scan' && Number.isFinite(t.confidence));
   const hasLLMData = tasks.length > 0 && tasks.some((t) => typeof t.usesLLM === 'boolean');
   const nonLLMCount = tasks.filter((t) => t.usesLLM === false && t.included).length;
+  const llmTotal = tasks.filter((t) => t.usesLLM === true).length;
 
   useInput((input, key) => {
     if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
@@ -28,8 +29,17 @@ export function PickTasks() {
     else if (input === 'a') selectAllTasks(true);
     else if (input === 'n') selectAllTasks(false);
     else if (input === 'x' && hasLLMData) {
-      // Uncheck all tests that don't invoke an LLM
+      // Uncheck all tests that don't invoke an LLM (keeps LLM picks as-is)
       tasks.forEach((t) => { if (t.usesLLM === false && t.included) toggleTask(t.id); });
+    }
+    else if (input === 'L' && hasLLMData) {
+      // Bulk: select ONLY LLM tests. One keystroke replaces `a` + `x` + manual
+      // scrolling on 400+ test repos. Reconciles cell-by-cell: check every
+      // usesLLM===true, uncheck everything else.
+      tasks.forEach((t) => {
+        const shouldBeIncluded = t.usesLLM === true;
+        if (t.included !== shouldBeIncluded) toggleTask(t.id);
+      });
     }
     else if (input === 'd') { setFocusedTask(tasks[cursor].id); goTo('taskDetail'); }
     else if (key.return) {
@@ -50,10 +60,10 @@ export function PickTasks() {
     <Frame
       title="Pick tasks"
       accent={SCREEN_ACCENT.pickTasks}
-      subtitle={`${picked}/${tasks.length} selected${hasClassifier ? ' · classified by canaryone judge' : ' · read by Haiku 4.5'}${nonLLMCount > 0 ? ` · ${nonLLMCount} non-LLM tests still checked` : ''}`}
+      subtitle={`${picked}/${tasks.length} selected${hasLLMData ? ` · ${llmTotal} use LLMs` : ''}${hasClassifier ? ' · classified by canaryone judge' : ' · read by Haiku 4.5'}${nonLLMCount > 0 ? ` · ${nonLLMCount} non-LLM checked` : ''}`}
       footer={
         <Text color="gray">
-          <Text color="cyan">↑↓</Text> nav · <Text color="cyan">space</Text> toggle · <Text color="cyan">d</Text> detail · <Text color="cyan">a</Text> all · <Text color="cyan">n</Text> none{hasLLMData ? <Text> · <Text color="cyan">x</Text> uncheck non-LLM</Text> : null} · {picked > 0
+          <Text color="cyan">↑↓</Text> nav · <Text color="cyan">space</Text> toggle · <Text color="cyan">d</Text> detail · <Text color="cyan">a</Text> all · <Text color="cyan">n</Text> none{hasLLMData ? <Text> · <Text color="#22c55e" bold>L</Text> LLM-only · <Text color="cyan">x</Text> uncheck non-LLM</Text> : null} · {picked > 0
             ? <Text color="#22c55e" bold>enter next →</Text>
             : <Text dimColor>enter (pick ≥1 test)</Text>} · <Text color="cyan">b</Text> back · <Text color="cyan">q</Text> quit
         </Text>
