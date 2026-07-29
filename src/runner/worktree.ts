@@ -44,6 +44,7 @@ export async function createWorktree(opts: {
     await execFileAsync('git', ['-C', targetDir, 'worktree', 'add', '--detach', wtPath, 'HEAD'], {
       maxBuffer: 8 * 1024 * 1024,
     });
+    await propagateEnvFiles(targetDir, wtPath);
     return {
       path: wtPath,
       async cleanup() {
@@ -59,12 +60,43 @@ export async function createWorktree(opts: {
 
   // Non-git target: shallow copy.
   await copyDir(targetDir, wtPath);
+  await propagateEnvFiles(targetDir, wtPath);
   return {
     path: wtPath,
     async cleanup() {
       try { await fsp.rm(wtPath, { recursive: true, force: true }); } catch { /* ignore */ }
     },
   };
+}
+
+// Copy the target repo's .env files into the worktree so tests that use
+// dotenv (or any framework that reads .env by convention) find their config.
+// .env is typically gitignored, so `git worktree add` doesn't include it —
+// tests would otherwise crash at module load on missing keys (Resend,
+// Supabase, etc).
+//
+// Match .env* by glob rather than a curated list — every framework has its
+// own precedence (Next.js, Vite, CRA, Remix, plain dotenv, custom .env.ci
+// etc.). The target repo's own env-loading is the source of truth about
+// which file wins; we just make them all reachable inside the ephemeral
+// checkout. Excludes .env.example / .env.sample (placeholder docs, not
+// real config — copying them would clobber values from a real .env).
+const ENV_EXCLUDE = new Set(['.env.example', '.env.sample']);
+
+async function propagateEnvFiles(src: string, dest: string): Promise<void> {
+  let entries: string[];
+  try { entries = await fsp.readdir(src); }
+  catch { return; }
+  await Promise.all(entries.map(async (name) => {
+    if (!name.startsWith('.env')) return;
+    if (ENV_EXCLUDE.has(name)) return;
+    const s = path.join(src, name);
+    try {
+      const st = await fsp.stat(s);
+      if (!st.isFile()) return;   // skip .env directories (unusual but possible)
+      await fsp.copyFile(s, path.join(dest, name));
+    } catch { /* non-fatal — worktree still usable */ }
+  }));
 }
 
 async function hasGitDir(dir: string): Promise<boolean> {
