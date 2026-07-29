@@ -198,6 +198,73 @@ Milestone J7: integration test + regression
       pnpm test:runner    # green, with judge tags
   - Commit each milestone (J1..J7) to main with a descriptive message.
 
+Milestone J8: run-complete ASCII summary
+  - src/runner/print-summary.ts (new)
+    - export printRunSummary(runId, configDir, {stream = process.stdout})
+      → void
+    - Opens .c1/db.sqlite read-only, queries sessions + classifier_tags
+      for the given runId, joins them into per-lane rollups:
+        - Pass count / total attempts
+        - Sum(cost_usd) as spend
+        - AVG(trajectory_score) per lane (from classifier_tags where
+          dimension='trajectory_score', value cast to integer)
+        - $/pass = spend / passes  (undefined if 0 passes)
+        - weighted $/pass = ($/pass) / (avg_traj / 100)  (undefined if
+          traj tags missing — column simply omitted)
+    - Renders an ASCII table matching this shape:
+
+        === Run complete · <shortId> ===
+
+        Lane                             Pass   $/pass      Traj   Weighted $/pass
+        ─────────────────────────────────────────────────────────────────────────
+        ● direct:nebius                  6/6    $2.75e-6    92     $2.99e-6
+        ● openrouter:moonshotai          6/6    $2.83e-5    88     $3.22e-5
+        ● direct:groq                    6/6    $8.00e-7    34 ⚠   $2.35e-6
+        ...
+
+        Best value: direct:nebius   ($2.99e-6 per grounded pass, traj 92)
+        Cheapest raw: direct:groq   ($8.00e-7 per pass, traj 34 ⚠ narrated)
+        ─────────────────────────────────────────────────────────────────
+        Total spend: $0.0324   Elapsed: 38s   Judge cost: $0.03
+
+    - Sort default: weighted $/pass ascending (best-value first). Rows
+      with 0 passes go to the bottom.
+    - "⚠" badge on Traj < 50.
+    - "Best value" line names the lane with the lowest weighted $/pass
+      among those with ≥1 pass. "Cheapest raw" is the lane with the
+      lowest raw $/pass regardless of traj — surfaces the punchline row.
+    - If NO judge tags exist for the run (e.g. someone ran the runner
+      without the judge worker enabled), gracefully omit the Traj +
+      Weighted columns and the two summary lines. Still prints the
+      basic pass / $/pass / spend table.
+
+  - Reuse fmtDollars from src/screens/LiveProgress.tsx — extract it to
+    src/lib/fmt.ts on the way (also import into LiveProgress.tsx).
+    fmt.ts should export fmtDollars + fmtDuration + any other formatter
+    that LiveProgress and print-summary both need.
+
+  - Hook in src/runner/orchestrator.ts:
+    - Import printRunSummary
+    - Call it AFTER await pool.drain() but BEFORE the final `run:complete`
+      event is emitted and the function returns
+    - Guard: only print when process.stdout.isTTY OR when opts.printSummary
+      is truthy (default true). This lets tests silence output if they need to.
+    - The Ink TUI writes to stdout too — coordination note: LiveProgress
+      renders inside Ink's alternate-screen buffer. When Ink unmounts on
+      run-complete (existing behavior in App/exit path), the alternate
+      buffer is restored and normal stdout is available. Verify the
+      summary appears cleanly below the last TUI frame — if not, gate it
+      to fire only in headless mode (from tests) and add a `c1 runs
+      summary <runId>` CLI subcommand for post-run terminal review.
+
+  - Extend tests/runner.test.mjs:
+    - Capture the child's stdout during the test (already available via
+      the spawned process pattern) or call printRunSummary(runId,
+      configDir, {stream: <string-collector>}) directly after the run.
+    - Assert stdout contains "Run complete", the runId short prefix,
+      "Best value:", and the fixture's lane (openrouter:openai when
+      running against openai/gpt-oss-20b).
+
 ────────────────────────────────────────────────────────────────────────────
 COST + TIMING
 ────────────────────────────────────────────────────────────────────────────
@@ -221,10 +288,13 @@ Signals:
   - trajectory_score is deterministic-modulo-LLM: same JSONL should
     always yield the same action + efficiency scores. Grounding and
     verification will vary slightly per Haiku call.
+  - stdout at end of `pnpm test:runner` shows the Lane / Pass / $/pass /
+    Traj / Weighted $/pass table from J8. This is the "did it work"
+    signal a human can eyeball.
   - tsc + pty regression clean
-  - Commit history: J1..J7 as separate commits on main
+  - Commit history: J1..J8 as separate commits on main
 
-Once J7 lands, ping Rupul to review and unblock Part A (multi-router)
+Once J8 lands, ping Rupul to review and unblock Part A (multi-router)
 implementation.
 
 ────────────────────────────────────────────────────────────────────────────
