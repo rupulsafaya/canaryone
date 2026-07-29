@@ -205,8 +205,8 @@ export function LiveProgress() {
     >
       {/* Header row */}
       <Box flexShrink={0}>
-        <Box width={COLS.model}><Text color="magenta" bold>Model</Text></Box>
-        <Box width={COLS.dest}><Text color="magenta" bold>Provider</Text></Box>
+        <Box width={COLS.model} justifyContent="flex-end"><Text color="magenta" bold>Model  </Text></Box>
+        <Box width={COLS.dest}><Text color="magenta" bold>  Provider</Text></Box>
         <Box width={COLS.router}><Text color="magenta" bold>Router</Text></Box>
         {includedTasks.map((t) => (
           <Box key={t.id} width={COLS.taskCell}><Text color="gray" bold>{t.id}</Text></Box>
@@ -250,12 +250,12 @@ export function LiveProgress() {
           : null;
         return (
           <Box key={lane} flexShrink={0}>
-            <Box width={COLS.model}>
+            <Box width={COLS.model} justifyContent="flex-end">
               <Text color={familyColor(disp.family)} bold>● </Text>
-              <Text color={familyColor(disp.family)}>{truncate(disp.modelName, COLS.model - 3)}</Text>
+              <Text color={familyColor(disp.family)}>{truncateLeft(disp.modelName, COLS.model - 5)}  </Text>
             </Box>
             <Box width={COLS.dest}>
-              <Text color="magenta">{truncate(disp.destName, COLS.dest - 1)}</Text>
+              <Text color="magenta">  {truncate(disp.destName, COLS.dest - 3)}</Text>
             </Box>
             <Box width={COLS.router}>
               <Text color={routerTagColor(disp.router)}>{shortRouter(disp.router)}</Text>
@@ -357,6 +357,9 @@ export function LiveProgress() {
 
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
+}
+function truncateLeft(s: string, n: number) {
+  return s.length > n ? '…' + s.slice(s.length - n + 1) : s.padStart(n);
 }
 function shortRouter(r: string | undefined) {
   switch (r) {

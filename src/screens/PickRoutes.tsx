@@ -192,8 +192,8 @@ export function PickRoutes() {
       {/* Column headers */}
       <Box flexShrink={0}>
         <Box width={4}><Text color="magenta" bold>   </Text></Box>
-        <Box width={40}><Text color="magenta" bold>Model</Text></Box>
-        <Box width={22}><Text color="magenta" bold>Provider</Text></Box>
+        <Box width={40} justifyContent="flex-end"><Text color="magenta" bold>Model  </Text></Box>
+        <Box width={22}><Text color="magenta" bold>  Provider</Text></Box>
         <Box width={12}><Text color="magenta" bold>Router</Text></Box>
         <Text color="magenta" bold>$/M in · out</Text>
       </Box>
@@ -223,11 +223,11 @@ export function PickRoutes() {
               {active ? <Text color="cyan" bold>▸ </Text> : <Text>  </Text>}
               <Text color={picked ? '#22c55e' : '#64748b'}>{check}</Text>
             </Box>
-            <Box width={40}>
-              <Text color={active ? 'white' : familyColor(route.family)} bold={active}>{truncate(route.displayName, 38)}</Text>
+            <Box width={40} justifyContent="flex-end">
+              <Text color={active ? 'white' : familyColor(route.family)} bold={active}>{truncateLeft(route.displayName, 38)}  </Text>
             </Box>
             <Box width={22}>
-              <Text color={isDim ? 'gray' : '#f472b6'} dimColor={isDim}>{truncate(route.providerLabel, 20)}</Text>
+              <Text color={isDim ? 'gray' : '#f472b6'} dimColor={isDim}>  {truncate(route.providerLabel, 18)}</Text>
             </Box>
             <Box width={12}>
               <Text color={providerBadgeColor(route.providerSlug)}>{route.routerLabel}</Text>
@@ -259,6 +259,15 @@ function formatPrice(v: number | null): string {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
+}
+
+/**
+ * Right-align + head-truncate: for slugs like `accounts/fireworks/routers/kimi-k3-fast`
+ * the informative part is the TAIL. Truncating from the front (`…/routers/kimi-k3-fast`)
+ * keeps the meaningful chars visible; padding the front makes ragged tails align.
+ */
+function truncateLeft(s: string, n: number): string {
+  return s.length > n ? '…' + s.slice(s.length - n + 1) : s.padStart(n);
 }
 
 function sanitizeInput(input: string): string {

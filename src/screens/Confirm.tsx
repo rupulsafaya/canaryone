@@ -260,8 +260,8 @@ export function Confirm() {
         <Box marginTop={1} flexDirection="column">
           <Box>
             <Box width={3}><Text color="gray" dimColor>   </Text></Box>
-            <Box width={26}><Text color="gray" dimColor bold>Model</Text></Box>
-            <Box width={22}><Text color="gray" dimColor bold>Provider</Text></Box>
+            <Box width={26} justifyContent="flex-end"><Text color="gray" dimColor bold>Model  </Text></Box>
+            <Box width={22}><Text color="gray" dimColor bold>  Provider</Text></Box>
             <Box width={12}><Text color="gray" dimColor bold>Router</Text></Box>
             <Text color="gray" dimColor bold>$/M in · out</Text>
           </Box>
@@ -273,9 +273,11 @@ export function Confirm() {
                   <Text> </Text>
                   <Text color={familyColor(l.family)}>● </Text>
                 </Box>
-                <Box width={26}><Text color="white">{truncate(l.modelDisplay, 24)}</Text></Box>
+                <Box width={26} justifyContent="flex-end">
+                  <Text color="white">{truncateLeft(l.modelDisplay, 24)}  </Text>
+                </Box>
                 <Box width={22}>
-                  <Text color={dim ? 'gray' : '#f472b6'} dimColor={dim}>{truncate(l.providerLabel, 20)}</Text>
+                  <Text color={dim ? 'gray' : '#f472b6'} dimColor={dim}>  {truncate(l.providerLabel, 18)}</Text>
                 </Box>
                 <Box width={12}><Text color={routerColor(l.router)}>{truncate(l.routerLabel, 10)}</Text></Box>
                 <Text color="gray">
@@ -390,6 +392,9 @@ function KV({ label, value, highlight, color }: { label: string; value: string; 
 }
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
+}
+function truncateLeft(s: string, n: number) {
+  return s.length > n ? '…' + s.slice(s.length - n + 1) : s.padStart(n);
 }
 function routerColor(r: string) {
   return r === 'direct' ? '#a78bfa' : r === 'bedrock' ? '#f97316' : r === 'vertex' ? '#4ade80' : r === 'azure' ? '#60a5fa' : '#22d3ee';
