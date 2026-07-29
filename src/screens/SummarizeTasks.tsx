@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import { useStore } from '../state/store.js';
 import { SCREEN_ACCENT } from '../data/colors.js';
@@ -146,18 +146,7 @@ export function SummarizeTasks() {
       )}
 
       {(mode === 'done' || mode === 'partial') && (
-        <Box flexDirection="column">
-          <Text color={mode === 'done' ? '#22c55e' : '#eab308'} bold>
-            {mode === 'done'
-              ? `✓ ${results.length} test${results.length === 1 ? '' : 's'} summarized`
-              : `⚠ ${errorCount} failed of ${results.length}${errorCount ? ' — those show as file paths' : ''}`}
-          </Text>
-          <Box marginTop={1} flexDirection="column">
-            {results.map((r, i) => (
-              <SummaryPreview key={i} result={r} />
-            ))}
-          </Box>
-        </Box>
+        <SummaryList results={results} mode={mode} errorCount={errorCount} />
       )}
 
       {mode === 'error' && (
@@ -170,40 +159,65 @@ export function SummarizeTasks() {
   );
 }
 
-function SummaryPreview({ result }: { result: SummarizeItemResult }) {
+// Compact one-line preview so 10+ tests fit in-frame without triggering Ink's
+// re-render corruption when content overflows. Bullets are dropped here on
+// purpose — the user reviews them on PickTasks / TaskDetail.
+function SummaryPreview({ result, cols }: { result: SummarizeItemResult; cols: number }) {
   if (!result.ok || !result.summary) {
     return (
-      <Box flexDirection="column" marginBottom={1}>
-        <Text color="cyan" bold>{result.file}</Text>
-        <Box paddingLeft={2}>
-          <Text color="#ef4444" dimColor>failed: {result.error ?? 'unknown error'}</Text>
-        </Box>
+      <Box flexShrink={0}>
+        <Text color="#ef4444">✗ </Text>
+        <Text color="cyan">{truncate(result.file, Math.max(24, Math.floor(cols * 0.35)))}</Text>
+        <Text color="gray" dimColor>  failed: {truncate(result.error ?? 'unknown error', Math.max(16, cols - 60))}</Text>
       </Box>
     );
   }
   const uses = result.summary.usesLLM;
+  const glyph = uses === true ? '●' : uses === false ? '○' : '?';
+  const glyphColor = uses === true ? '#22c55e' : uses === false ? '#94a3b8' : '#eab308';
+  const fileW = Math.max(24, Math.floor(cols * 0.35));
+  const summaryW = Math.max(20, cols - fileW - 6);
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Text color="cyan" bold>{result.file}</Text>
-        <Text color="gray">  </Text>
-        {uses === true
-          ? <Text color="#22c55e" bold>● uses LLM</Text>
-          : uses === false
-            ? <Text color="#94a3b8" dimColor>○ no LLM</Text>
-            : <Text color="#eab308">? unknown</Text>}
-        {result.summary.llmEvidence && (
-          <Text color="gray" dimColor>  — {result.summary.llmEvidence}</Text>
+    <Box flexShrink={0}>
+      <Text color={glyphColor} bold>{glyph} </Text>
+      <Text color="cyan">{truncate(result.file, fileW)}</Text>
+      <Text color="gray"> </Text>
+      <Text color="white">{truncate(result.summary.summary, summaryW)}</Text>
+    </Box>
+  );
+}
+
+function SummaryList({
+  results, mode, errorCount,
+}: { results: SummarizeItemResult[]; mode: Mode; errorCount: number }) {
+  const { stdout } = useStdout();
+  const cols = stdout.columns ?? 100;
+  const rows = stdout.rows ?? 30;
+  // Frame + title + subtitle + intro text + spacing + footer ≈ 10 rows overhead.
+  // Each preview row = 1 line. Leave 2 rows for the "…+N more" tail.
+  const maxPreviews = Math.max(3, rows - 12);
+  const shown = results.slice(0, maxPreviews);
+  const hidden = results.length - shown.length;
+  return (
+    <Box flexDirection="column" flexShrink={1}>
+      <Text color={mode === 'done' ? '#22c55e' : '#eab308'} bold>
+        {mode === 'done'
+          ? `✓ ${results.length} test${results.length === 1 ? '' : 's'} summarized`
+          : `⚠ ${errorCount} failed of ${results.length}`}
+      </Text>
+      <Box marginTop={1} flexDirection="column">
+        {shown.map((r, i) => <SummaryPreview key={i} result={r} cols={cols} />)}
+        {hidden > 0 && (
+          <Text color="gray" dimColor>… +{hidden} more (review them on the next screen)</Text>
         )}
-      </Box>
-      <Box paddingLeft={2}><Text color="white">{result.summary.summary}</Text></Box>
-      <Box paddingLeft={2} flexDirection="column">
-        {result.summary.bullets.slice(0, 5).map((b, i) => (
-          <Text key={i} color="gray">• {b}</Text>
-        ))}
       </Box>
     </Box>
   );
+}
+
+function truncate(s: string, n: number): string {
+  if (n <= 1) return s.slice(0, Math.max(0, n));
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
 function Footer({ mode }: { mode: Mode }) {
