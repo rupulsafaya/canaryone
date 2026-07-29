@@ -126,8 +126,16 @@ export async function fetchModels(providerSlug: string, token: string | null): P
 export interface CanonicalizeOpts {
   /** OpenRouter key used to route the Haiku call. Required for direct-provider slugs. */
   orKey: string | null;
+  /**
+   * OR catalog canonical slugs. Passed to Haiku as alignment targets so a
+   * direct-provider slug like `accounts/fireworks/models/glm-5p2` maps to the
+   * same canonical (`z-ai/glm-5.2`) that OR uses, instead of Haiku inventing
+   * a new form. Without this list, different providers get different
+   * canonical strings for the same model and PickDestinations misses matches.
+   */
+  orCanonicalSlugs?: string[];
   /** Injectable for tests. Defaults to the real OR endpoint. */
-  callHaiku?: (rawSlugs: string[], orKey: string) => Promise<Record<string, string>>;
+  callHaiku?: (rawSlugs: string[], orKey: string, orCanonicalSlugs: string[]) => Promise<Record<string, string>>;
 }
 
 /**
@@ -155,8 +163,9 @@ export async function canonicalizeSlugs(
     return { map: identityMap(rawSlugs), error: 'no OR key available to canonicalize; identity fallback' };
   }
   const runner = opts.callHaiku ?? callHaikuLive;
+  const orCanonicalSlugs = opts.orCanonicalSlugs ?? [];
   try {
-    const returned = await runner(rawSlugs, opts.orKey);
+    const returned = await runner(rawSlugs, opts.orKey, orCanonicalSlugs);
     const merged: Record<string, string> = {};
     for (const raw of rawSlugs) {
       const canonical = returned[raw];
@@ -178,21 +187,29 @@ function identityMap(rawSlugs: string[]): Record<string, string> {
 }
 
 const CANONICALIZE_SYSTEM = [
-  'You normalise LLM model identifiers to a canonical `family/variant` slug.',
-  'Input: a JSON array of provider-native model slugs.',
-  'Output: a JSON object mapping each input string to its canonical slug.',
-  'Canonical form: lowercase, hyphenated, `<owner>/<model>-<variant>`, following',
-  "OpenRouter's convention where possible. Preserve version numbers.",
-  "Group aliases so 'kimi-k3-preview' and 'moonshotai/Kimi-K3-Instruct' both map",
-  "to 'moonshotai/kimi-k3'. When uncertain, return the input string verbatim.",
+  'You normalise LLM model identifiers to canonical OpenRouter-style slugs.',
+  'Input: an object with `raw` (provider-native slugs to normalise) and',
+  '`or_canonical` (OpenRouter canonical slugs to align to WHEN THEY MATCH THE SAME MODEL).',
+  'Output: a JSON object mapping each raw string to a canonical slug.',
+  'ALIGNMENT RULE: If a raw slug refers to the SAME model as an entry in',
+  '`or_canonical` (same family, same version, same variant), map it to that',
+  'OR canonical slug verbatim. This is the highest-priority rule — do not',
+  'invent a new canonical form when an OR one already exists.',
+  'Examples: raw `zai/glm-5.2` + OR `z-ai/glm-5.2` → map to `z-ai/glm-5.2`.',
+  'raw `accounts/fireworks/models/glm-5p2` + OR `z-ai/glm-5.2` → `z-ai/glm-5.2`.',
+  'raw `@cf/zai-org/glm-5.2` + OR `z-ai/glm-5.2` → `z-ai/glm-5.2`.',
+  'raw `kimi-k3-preview` + OR `moonshotai/kimi-k3` → `moonshotai/kimi-k3`.',
+  'FALLBACK: If no OR canonical matches, synthesise `<owner>/<model>-<variant>`',
+  "lowercase hyphenated in OpenRouter's convention.",
+  'When uncertain, return the raw string verbatim.',
   'Reply with ONLY the JSON object — no markdown, no prose, no explanations.',
-  'Every input must appear exactly once as a key.',
+  'Every raw input must appear exactly once as a key.',
 ].join(' ');
 
-async function callHaikuLive(rawSlugs: string[], orKey: string): Promise<Record<string, string>> {
+async function callHaikuLive(rawSlugs: string[], orKey: string, orCanonicalSlugs: string[]): Promise<Record<string, string>> {
   const messages = [
     { role: 'system', content: CANONICALIZE_SYSTEM },
-    { role: 'user', content: JSON.stringify(rawSlugs) },
+    { role: 'user', content: JSON.stringify({ raw: rawSlugs, or_canonical: orCanonicalSlugs }) },
   ];
   const res = await fetch(OR_CHAT_URL, {
     method: 'POST',

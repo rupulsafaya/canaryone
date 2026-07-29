@@ -89,6 +89,7 @@ type State = {
   loadMethodology: (force?: boolean) => Promise<void>;
   loadCatalog: (force?: boolean) => Promise<void>;
   loadProviderCatalogs: () => Promise<void>;
+  refreshProviderCatalog: (providerSlug: string, token: string | null) => Promise<void>;
   loadEndpointsFor: (slugs: string[], force?: boolean) => Promise<void>;
   persistTaskSelection: () => Promise<void>;
   applyConfigToTasks: () => void;
@@ -326,6 +327,23 @@ export const useStore = create<State>((set, get) => ({
     }
   },
   loadProviderCatalogs: async () => {
+    const cats = await loadCatalogs();
+    set({ providerCatalogs: cats });
+  },
+  /**
+   * Refresh one provider's catalog with OR canonical slugs as alignment
+   * targets, so Haiku maps direct-provider slugs onto OR's canonical form
+   * (`z-ai/glm-5.2`) instead of inventing a new one per provider.
+   * ApiKeys screen calls this on [r] / [R] and after a successful paste.
+   */
+  refreshProviderCatalog: async (providerSlug: string, token: string | null) => {
+    const { refreshCatalog } = await import('../scan/provider-catalog.js');
+    const s = get();
+    // Make sure the OR catalog is loaded so we have canonical slugs.
+    if (!s.orCatalog) await get().loadCatalog();
+    const orCanonicalSlugs = get().orCatalog?.models.map((m) => m.slug) ?? [];
+    const orKey = (await detectOrKey()).value ?? null;
+    await refreshCatalog(providerSlug, token, { orKey, orCanonicalSlugs });
     const cats = await loadCatalogs();
     set({ providerCatalogs: cats });
   },

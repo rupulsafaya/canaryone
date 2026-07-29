@@ -15,7 +15,6 @@ import {
   type EnvSource,
 } from '../proxy/providers.js';
 import { writeEnvVar, writeEnvVars, deleteEnvVars, HOME_ENV_PATH_FOR_TESTS } from '../scan/env-file.js';
-import { refreshCatalog } from '../scan/provider-catalog.js';
 
 // One row per unique primary env var. moonshot-intl + moonshot-cn share
 // MOONSHOT_API_KEY, so they collapse into a single row labelled
@@ -466,9 +465,12 @@ async function triggerCatalogRefresh(
   patchRow: (id: string, partial: Partial<RowState>) => void,
 ): Promise<void> {
   patchRow(row.id, { transient: 'fetching catalog…' });
-  const orKey = (await readEnv('OPENROUTER_API_KEY')).value;
   try {
-    await refreshCatalog(row.representativeSlug, token, { orKey });
+    // Route through the store so OR canonical slugs get passed to Haiku
+    // as alignment targets — without this, per-provider Haiku calls invent
+    // divergent canonical forms and PickDestinations misses cross-provider matches.
+    const { useStore } = await import('../state/store.js');
+    await useStore.getState().refreshProviderCatalog(row.representativeSlug, token);
     patchRow(row.id, { transient: null });
   } catch (e) {
     patchRow(row.id, {

@@ -80,8 +80,9 @@ async function main() {
     'Vercel identity map');
 
   // ---------- canonicalizeSlugs — direct with mocked Haiku ----------
-  const stubHaiku = async (rawSlugs, orKey) => {
+  const stubHaiku = async (rawSlugs, orKey, orCanonicalSlugs) => {
     assert(orKey === 'sk-or-test', `mocked haiku got wrong orKey: ${orKey}`);
+    assert(Array.isArray(orCanonicalSlugs), `mocked haiku got non-array orCanonicalSlugs: ${orCanonicalSlugs}`);
     const map = {};
     for (const s of rawSlugs) {
       if (s.includes('kimi')) map[s] = 'moonshotai/kimi-k3';
