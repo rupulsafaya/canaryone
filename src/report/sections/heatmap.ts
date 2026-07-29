@@ -73,7 +73,7 @@ export function renderHeatmap(data: RunData): string {
   <details class="explain">
     <summary>How to read this chart</summary>
     <div class="explain-body">
-      <p>One row per lane, one column per task. Cell color = weighted \$/pass gradient (green cheapest → red most expensive). Cell text = raw \$/pass for that (lane, task) combination. Right-most column shows the lane's overall weighted \$/pass with traj badge. Toggle to <strong>raw</strong> to color by raw \$/pass instead — surfaces "cheap by naive metric" lanes that hide low trajectory quality.</p>
+      <p>One row per lane, one column per task. Cell color = weighted \$/pass gradient (green cheapest → red most expensive). Cell text = raw \$/pass for that (lane, task) combination. Right-most column shows the lane's overall weighted \$/pass with judge score badge. Toggle to <strong>raw</strong> to color by raw \$/pass instead — surfaces "cheap by naive metric" lanes that hide a low judge score.</p>
     </div>
   </details>
   <div class="heat-toggle">
@@ -114,7 +114,7 @@ function renderRow(
   }).join('');
 
   const summary = lane.weightedDollarsPerPass != null
-    ? `${fmtDollars(lane.weightedDollarsPerPass)}${lane.avgTraj != null ? ` <span class="muted">(traj ${lane.avgTraj}${lane.avgTraj < 50 ? ' ⚠' : ''})</span>` : ''}`
+    ? `${fmtDollars(lane.weightedDollarsPerPass)}${lane.avgTraj != null ? ` <span class="muted">(judge ${lane.avgTraj}${lane.avgTraj < 50 ? ' ⚠' : ''})</span>` : ''}`
     : '<span class="muted">—</span>';
 
   return `

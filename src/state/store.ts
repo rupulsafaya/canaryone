@@ -372,7 +372,7 @@ export const useStore = create<State>((set, get) => ({
     }
 
     const taskSpecs: TaskSpec[] = includedTasks.map((t) => ({
-      id: t.id, file: t.file, summary: t.summary,
+      id: t.id, file: t.file, summary: t.summary, usesLlm: t.usesLLM ?? false,
     }));
 
     // Seed cells as queued so LiveProgress renders the full matrix immediately.

@@ -329,7 +329,7 @@ function renderLayer4(data: RunData): string {
   const trajValues = [...verdictBySession.values()]
     .map((v) => v.trajectory_score)
     .filter((n): n is number => n != null);
-  const trajRange = trajValues.length > 0
+  const judgeRange = trajValues.length > 0
     ? `${Math.min(...trajValues)}–${Math.max(...trajValues)}`
     : '(no judge tags)';
 
@@ -337,7 +337,7 @@ function renderLayer4(data: RunData): string {
     <table>
       <tr><td class="label">Total spend</td><td><strong>${fmtDollars(totalSpend)}</strong></td></tr>
       <tr><td class="label">Pass rate</td><td>${passed}/${sessions.length}</td></tr>
-      <tr><td class="label">Traj range</td><td>${escapeHtml(trajRange)}</td></tr>
+      <tr><td class="label">Judge score range</td><td>${escapeHtml(judgeRange)}</td></tr>
       <tr><td class="label">Best value</td><td>${bestValue ? `<code>${escapeHtml(bestValue.lane)}</code> ${fmtDollars(bestValue.weighted!)} weighted/pass` : '<span class="muted">(no lane has weighted metric)</span>'}</td></tr>
       <tr><td class="label">Cheapest raw</td><td>${cheapestRaw ? `<code>${escapeHtml(cheapestRaw.lane)}</code> ${fmtDollars(cheapestRaw.dollarsPerPass!)}/pass${cheapestRaw.avgTraj != null ? ` (traj ${Math.round(cheapestRaw.avgTraj)})` : ''}` : '<span class="muted">(no passing lane)</span>'}</td></tr>
     </table>`;
@@ -346,8 +346,8 @@ function renderLayer4(data: RunData): string {
     <ul>
       <li>Per-repeat variance (cost, latency, traj)</li>
       <li>p50 / p95 latency per lane</li>
-      <li>Trajectory sub-score histograms (action / grounding / verification / efficiency)</li>
-      <li>Tool-call count per session (drives the traj⚠ interpretation — see SPEC §4.5)</li>
+      <li>Judge sub-score histograms (action / grounding / verification / efficiency)</li>
+      <li>Tool-call count per session (drives the judge-score ⚠ interpretation — see SPEC §4.5)</li>
       <li>Refusal rate (final content empty / finish_reason=stop with no output)</li>
       <li>Failure taxonomy (auth / rate-limit / 5xx / timeout / setup)</li>
       <li>Judge disagreement rate per lane (if same run had multiple judge versions)</li>

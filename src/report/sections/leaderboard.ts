@@ -26,7 +26,7 @@ export function renderLeaderboard(data: RunData): string {
       label: 'Best value',
       num: fmtDollars(ranks.bestValue.weightedDollarsPerPass!),
       lane: ranks.bestValue.destSlug,
-      detail: `weighted \$/pass · traj ${ranks.bestValue.avgTraj ?? '—'}`,
+      detail: `weighted \$/pass · judge ${ranks.bestValue.avgTraj ?? '—'}`,
       primary: true,
     });
   } else {
@@ -40,8 +40,8 @@ export function renderLeaderboard(data: RunData): string {
       num: fmtDollars(ranks.cheapestRaw.dollarsPerPass!),
       lane: ranks.cheapestRaw.destSlug,
       detail: warned
-        ? `raw \$/pass · traj ${ranks.cheapestRaw.avgTraj} ⚠ narrated`
-        : `raw \$/pass · traj ${ranks.cheapestRaw.avgTraj ?? '—'}`,
+        ? `raw \$/pass · judge ${ranks.cheapestRaw.avgTraj} ⚠ narrated`
+        : `raw \$/pass · judge ${ranks.cheapestRaw.avgTraj ?? '—'}`,
     });
   } else {
     cards.push({ label: 'Cheapest raw', num: '—', detail: 'no passing lane' });

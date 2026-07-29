@@ -32,7 +32,7 @@ export function renderAggregate(data: RunData): string {
   const narratedCallout = ranks.cheapestRaw && ranks.cheapestRaw.avgTraj != null && ranks.cheapestRaw.avgTraj < 50 && ranks.cheapestRaw !== ranks.bestValue
     ? `
     <div class="aggregate-callout">
-      <strong>⚠ ${escapeHtml(ranks.cheapestRaw.destSlug)}</strong> is cheapest by raw \$/pass (<code>${escapeHtml(fmtDollars(ranks.cheapestRaw.dollarsPerPass!))}</code>) but scores <strong>traj ${ranks.cheapestRaw.avgTraj}</strong> — the passing test may not reflect real work. Weighted \$/pass = <code>${escapeHtml(fmtDollars(ranks.cheapestRaw.weightedDollarsPerPass!))}</code>. See <em>How we measure</em> above and §4.5 in the SPEC for interpretation.
+      <strong>⚠ ${escapeHtml(ranks.cheapestRaw.destSlug)}</strong> is cheapest by raw \$/pass (<code>${escapeHtml(fmtDollars(ranks.cheapestRaw.dollarsPerPass!))}</code>) but scores <strong>judge score ${ranks.cheapestRaw.avgTraj}</strong> — the passing test may not reflect real work. Weighted \$/pass = <code>${escapeHtml(fmtDollars(ranks.cheapestRaw.weightedDollarsPerPass!))}</code>. See <em>How we measure</em> above and §4.5 in the SPEC for interpretation.
     </div>`
     : '';
 
@@ -48,19 +48,19 @@ export function renderAggregate(data: RunData): string {
   <div class="aggregate-card">
     <h4>Cost analysis</h4>
     ${row('Best value', ranks.bestValue
-      ? `<span class="lane">${escapeHtml(ranks.bestValue.destSlug)}</span> · <span class="num">${escapeHtml(fmtDollars(ranks.bestValue.weightedDollarsPerPass!))}</span> per grounded pass ${ranks.bestValue.avgTraj != null ? `(traj ${ranks.bestValue.avgTraj})` : ''}`
+      ? `<span class="lane">${escapeHtml(ranks.bestValue.destSlug)}</span> · <span class="num">${escapeHtml(fmtDollars(ranks.bestValue.weightedDollarsPerPass!))}</span> per grounded pass ${ranks.bestValue.avgTraj != null ? `(judge ${ranks.bestValue.avgTraj})` : ''}`
       : '<span class="muted">—</span>')}
     ${row('Cheapest raw', ranks.cheapestRaw
-      ? `<span class="lane">${escapeHtml(ranks.cheapestRaw.destSlug)}</span> · <span class="num">${escapeHtml(fmtDollars(ranks.cheapestRaw.dollarsPerPass!))}</span> per pass ${ranks.cheapestRaw.avgTraj != null ? `(traj ${ranks.cheapestRaw.avgTraj}${ranks.cheapestRaw.avgTraj < 50 ? ' ⚠ narrated' : ''})` : ''}`
+      ? `<span class="lane">${escapeHtml(ranks.cheapestRaw.destSlug)}</span> · <span class="num">${escapeHtml(fmtDollars(ranks.cheapestRaw.dollarsPerPass!))}</span> per pass ${ranks.cheapestRaw.avgTraj != null ? `(judge ${ranks.cheapestRaw.avgTraj}${ranks.cheapestRaw.avgTraj < 50 ? ' ⚠ narrated' : ''})` : ''}`
       : '<span class="muted">—</span>')}
     ${row('Most expensive weighted', ranks.mostExpensive && ranks.mostExpensive !== ranks.bestValue
-      ? `<span class="lane">${escapeHtml(ranks.mostExpensive.destSlug)}</span> · <span class="num">${escapeHtml(fmtDollars(ranks.mostExpensive.weightedDollarsPerPass!))}</span> per grounded pass ${ranks.mostExpensive.avgTraj != null ? `(traj ${ranks.mostExpensive.avgTraj})` : ''}`
+      ? `<span class="lane">${escapeHtml(ranks.mostExpensive.destSlug)}</span> · <span class="num">${escapeHtml(fmtDollars(ranks.mostExpensive.weightedDollarsPerPass!))}</span> per grounded pass ${ranks.mostExpensive.avgTraj != null ? `(judge ${ranks.mostExpensive.avgTraj})` : ''}`
       : '<span class="muted">(only one lane, no spread)</span>')}
     ${row('Spread (weighted)', spread != null
       ? `<strong>${spread.toFixed(1)}×</strong> best-value → most-expensive on identical work`
       : '<span class="muted">—</span>')}
-    ${row('Highest trajectory', ranks.highestTraj
-      ? `<span class="lane">${escapeHtml(ranks.highestTraj.destSlug)}</span> · traj <strong>${ranks.highestTraj.avgTraj}</strong>/100`
+    ${row('Highest judge score', ranks.highestTraj
+      ? `<span class="lane">${escapeHtml(ranks.highestTraj.destSlug)}</span> · <strong>${ranks.highestTraj.avgTraj}</strong>/100`
       : '<span class="muted">—</span>')}
     ${directVsOr ? row('Direct vs OR', directVsOr) : ''}
     ${row('Pass rate', `<strong>${totalPassed}/${totalAttempted}</strong> ${totalAttempted > 0 ? `<span class="muted">(${Math.round((totalPassed / totalAttempted) * 100)}%)</span>` : ''}`)}

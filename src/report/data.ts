@@ -152,7 +152,14 @@ export async function loadRun(runId: string, configDir: string): Promise<RunData
     }
     const verdictBySession = pivotVerdicts(tagsBySession);
 
-    const tasksMeta = db.prepare('SELECT * FROM tasks_meta').all() as unknown as TaskMetaRow[];
+    let tasksMeta = db.prepare('SELECT * FROM tasks_meta').all() as unknown as TaskMetaRow[];
+
+    // Fallback: pre-P2 runs didn't write tasks_meta. Read config.json (same
+    // directory as db.sqlite) and synthesise rows keyed by task_id used in
+    // this run's sessions. Best-effort — missing file is a no-op.
+    if (tasksMeta.length === 0 && sessions.length > 0) {
+      tasksMeta = await backfillTasksMetaFromConfig(configDir, sessions);
+    }
 
     // meta.json — optional; older runs may not have it.
     const meta = await readRunMeta(configDir, runId);
@@ -372,6 +379,38 @@ export async function profileTrafficBodies(jsonlPath: string, kind: 'request' | 
     }
   } catch { /* fall through */ }
   return profileJsonRecords(bodies);
+}
+
+async function backfillTasksMetaFromConfig(configDir: string, sessions: SessionRow[]): Promise<TaskMetaRow[]> {
+  const cfgPath = path.join(configDir, '..', '.c1', 'config.json');
+  // configDir IS <targetDir>/.c1, so config.json is next to db.sqlite.
+  const p = path.join(configDir, 'config.json');
+  try {
+    const raw = await import('node:fs/promises').then((m) => m.readFile(p, 'utf8'));
+    const cfg = JSON.parse(raw) as {
+      tasks?: { summaries?: Record<string, { summary?: string; usesLLM?: boolean }> };
+    };
+    const summaries = cfg.tasks?.summaries ?? {};
+    // Map file → summary. Then match sessions by task_file.
+    const seen = new Set<string>();
+    const rows: TaskMetaRow[] = [];
+    for (const s of sessions) {
+      if (seen.has(s.task_id)) continue;
+      seen.add(s.task_id);
+      const sum = summaries[s.task_file];
+      rows.push({
+        task_id: s.task_id,
+        file: s.task_file,
+        summary: sum?.summary ?? null,
+        uses_llm: sum?.usesLLM ? 1 : 0,
+      });
+    }
+    return rows;
+  } catch {
+    // Silent fallback — void return means no summaries in the report.
+    void cfgPath;
+    return [];
+  }
 }
 
 // ---------- lane rollup (shared by leaderboard/lane-table/heatmap/aggregate) ----------

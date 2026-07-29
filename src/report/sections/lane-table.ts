@@ -38,8 +38,8 @@ export function renderLaneTable(data: RunData): string {
         <dt>Rtr</dt><dd>Router (colored badge): OpenRouter / direct / Vercel / Cloudflare.</dd>
         <dt>Pass</dt><dd><code>passed / attempted</code> for this lane.</dd>
         <dt>\$/pass</dt><dd>Raw cost per pass: <code>total spend / passed count</code>. Ignores trajectory quality.</dd>
-        <dt>Traj</dt><dd>Average trajectory score (0-100) across this lane's sessions. Composite of action + grounding + verification + efficiency. <code>⚠</code> on scores &lt; 50.</dd>
-        <dt>Weighted \$/pass</dt><dd>The primary metric: <code>\$/pass ÷ (traj / 100)</code>. Penalizes narrated passes. Default sort ascending.</dd>
+        <dt>Judge</dt><dd>Average judge score (0-100) across this lane's sessions — composite of action + grounding + verification + efficiency, computed by the judge LLM after each session. <code>⚠</code> on scores &lt; 50 (usually means "test passed but the model didn't really do the work"; see §4.5 of the SPEC for the caveat around workloads that don't exercise tool_calls).</dd>
+        <dt>Weighted \$/pass</dt><dd>The primary metric: <code>\$/pass ÷ (judge score / 100)</code>. Penalises narrated passes. Default sort ascending.</dd>
         <dt>p50 / p95 lat.</dt><dd>Per-step latency percentiles across the lane. Wide spread = long-tail or timeouts.</dd>
       </dl>
       <p style="margin-top: 10px;">Click any column header to sort. Green row = winner (lowest weighted \$/pass).</p>
@@ -54,7 +54,7 @@ export function renderLaneTable(data: RunData): string {
           <th class="sortable" data-sort-key="router">Rtr</th>
           <th class="sortable" data-sort-key="pass" style="text-align: right;">Pass</th>
           <th class="sortable sort-desc" data-sort-key="cost_per_pass" style="text-align: right;">\$/pass</th>
-          <th class="sortable" data-sort-key="traj" style="text-align: right;">Traj</th>
+          <th class="sortable" data-sort-key="traj" style="text-align: right;">Judge</th>
           <th class="sortable sort-asc" data-sort-key="weighted" style="text-align: right;">Weighted \$/pass</th>
           <th class="sortable" data-sort-key="p50" style="text-align: right;">p50 lat.</th>
           <th class="sortable" data-sort-key="p95" style="text-align: right;">p95 lat.</th>

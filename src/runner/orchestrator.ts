@@ -39,6 +39,7 @@ export interface TaskSpec {
   id: string;
   file: string;                 // repo-relative path
   summary?: string;
+  usesLlm?: boolean;
 }
 
 export interface RunSpec {
@@ -124,6 +125,13 @@ export class RunEngine {
     // Deps cache once per run — every session symlinks into the same node_modules.
     const deps = await ensureDepsCache({ targetDir: spec.targetDir, configDir: spec.configDir })
       .catch((e) => { throw new Error(`deps install failed: ${e instanceof Error ? e.message : String(e)}`); });
+
+    // Persist task summaries so the report + downstream tools can render
+    // "what this test does" alongside the file path. Safe to re-run (upsert).
+    for (const t of spec.tasks) {
+      try { db.upsertTaskMeta(t.id, t.file, t.summary ?? null, !!t.usesLlm); }
+      catch { /* non-fatal — tasks_meta is best-effort metadata */ }
+    }
 
     // Materialize all (task × lane × repeat) sessions up front so LiveProgress
     // sees the full matrix as 'queued' immediately.

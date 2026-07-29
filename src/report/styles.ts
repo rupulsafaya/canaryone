@@ -613,6 +613,28 @@ details.session > .body {
   margin-top: 12px;
 }
 
+/* Session · task summary block (top of expanded body) */
+.task-summary {
+  margin: 0 0 14px 0;
+  padding: 10px 14px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 5px;
+}
+.task-summary-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #1e40af;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.task-summary-body {
+  margin-top: 4px;
+  font-size: 13.5px;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
 /* Section 05 · Aggregate card */
 .aggregate-card {
   margin-top: 12px;
