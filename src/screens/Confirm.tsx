@@ -55,9 +55,13 @@ export function Confirm() {
   const loadEndpointsFor = useStore((s) => s.loadEndpointsFor);
   const pickedRouteIds = useStore((s) => s.pickedRouteIds);
   const pickedRoutes = useStore((s) => s.pickedRoutes);
+  const preflight = useStore((s) => s.preflight);
+  const runPreflight = useStore((s) => s.runPreflight);
+  const toggleRoutePick = useStore((s) => s.toggleRoutePick);
   type EditField = 'cap' | 'parallelism' | 'repeats';
   const [editing, setEditing] = useState<EditField | null>(null);
   const [draft, setDraft] = useState('');
+  const [forceThrough, setForceThrough] = useState(false);
 
   // Ensure real endpoints are loaded so pricing on this screen matches what
   // was shown on PickDestinations. Idempotent — cached hits are instant.
@@ -65,6 +69,16 @@ export function Confirm() {
   useEffect(() => {
     if (modelSlugs.length > 0) void loadEndpointsFor(modelSlugs);
   }, [modelSlugs, loadEndpointsFor]);
+
+  // Auto-run preflight on mount + whenever picks change. Cheap (~$0.001/lane)
+  // and catches billing gates + entitlement issues before a 20-min run.
+  const picksSignature = useMemo(() => [...pickedRouteIds].sort().join(','), [pickedRouteIds]);
+  useEffect(() => {
+    if (pickedRouteIds.size > 0 && preflight.status !== 'running') {
+      void runPreflight();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picksSignature]);
 
   const useCatalog = orCatalog !== null && orCatalog.models.length > 0;
 
@@ -96,13 +110,36 @@ export function Confirm() {
       if (input && allowed.test(input)) setDraft((d) => d + input);
       return;
     }
-    if (key.return) startRun();
+    if (key.return) {
+      // Gate on preflight — block on billing/auth/model-access unless forced.
+      const blocking = preflight.results.filter((r) =>
+        !r.result.ok && (r.result.category === 'auth' || r.result.category === 'billing' || r.result.category === 'model-access'),
+      );
+      if (blocking.length > 0 && !forceThrough) {
+        // Ignore Enter until user hits 's' (skip failing) or 'f' (force).
+        return;
+      }
+      startRun();
+    }
     else if (input === 't') goTo('pickTasks');
     else if (input === 'm') goTo('pickRoutes');
     else if (input === 'h') goTo('pickRoutes');
     else if (input === 'c') openEditor('cap');
     else if (input === 'p') openEditor('parallelism');
     else if (input === 'r') openEditor('repeats');
+    else if (input === 'P') { void runPreflight(); }        // manual retry
+    else if (input === 's') {
+      // Skip failing lanes — un-toggle their picks so buildLaneSpecs excludes them.
+      const failingLaneKeys = new Set(preflight.results.filter((r) => !r.result.ok).map((r) => r.laneKey));
+      if (failingLaneKeys.size === 0) return;
+      // Route ids don't equal laneKeys; recompute pickedRoutes and unpick the ones whose synthesized laneKey is in failingLaneKeys.
+      for (const route of pickedRoutes()) {
+        const dest = route.variantSlug ? `${route.providerSlug}:${route.variantSlug}` : route.providerSlug;
+        const k = `${route.wireSlug}@${dest}`;
+        if (failingLaneKeys.has(k)) void toggleRoutePick(route.id);
+      }
+    }
+    else if (input === 'f') setForceThrough((v) => !v);
     else if (input === 'q' || key.escape) process.exit(0);
   });
 
@@ -179,6 +216,13 @@ export function Confirm() {
   const credits = orCatalog?.credits ?? null;
   const overCredits = credits != null && totalCost > credits;
 
+  const preflightBlocking = preflight.results.filter((r) =>
+    !r.result.ok && (r.result.category === 'auth' || r.result.category === 'billing' || r.result.category === 'model-access'),
+  ).length;
+  const preflightWarnings = preflight.results.filter((r) =>
+    !r.result.ok && !(r.result.category === 'auth' || r.result.category === 'billing' || r.result.category === 'model-access'),
+  ).length;
+
   return (
     <Frame
       title="Confirm & run"
@@ -191,14 +235,21 @@ export function Confirm() {
             <Text color="white" bold>{draft}</Text><Text color="gray">▏</Text><Text color="gray"> · enter save · esc cancel</Text>
           </Text>
         ) : (
-          <Text color="gray">
-            {overCap
-              ? <Text color="gray">enter <Text dimColor>(blocked, over cap)</Text></Text>
-              : totalRuns === 0
-                ? <Text color="gray">enter <Text dimColor>(blocked, 0 runs)</Text></Text>
-                : <Text color="#22c55e" bold>enter RUN</Text>}
-            <Text color="gray"> · </Text><Text color="cyan">c</Text> cap · <Text color="cyan">p</Text> parallelism · <Text color="cyan">r</Text> repeats · <Text color="cyan">t</Text> tasks · <Text color="cyan">m</Text> models · <Text color="cyan">h</Text> destinations · <Text color="cyan">q</Text> quit
-          </Text>
+          <Box flexDirection="column">
+            <Text color="gray">
+              {overCap
+                ? <Text color="gray">enter <Text dimColor>(blocked, over cap)</Text></Text>
+                : totalRuns === 0
+                  ? <Text color="gray">enter <Text dimColor>(blocked, 0 runs)</Text></Text>
+                  : preflightBlocking > 0 && !forceThrough
+                    ? <Text color="gray">enter <Text color="#ef4444">(blocked, {preflightBlocking} preflight fail{preflightBlocking === 1 ? '' : 's'})</Text></Text>
+                    : <Text color="#22c55e" bold>enter RUN</Text>}
+              <Text color="gray"> · </Text><Text color="cyan">c</Text> cap · <Text color="cyan">p</Text> par · <Text color="cyan">r</Text> reps · <Text color="cyan">t</Text> tasks · <Text color="cyan">m</Text> routes · <Text color="cyan">q</Text> quit
+            </Text>
+            {preflightBlocking > 0 && !forceThrough && (
+              <Text color="gray"><Text color="cyan">s</Text> skip failing lanes · <Text color="cyan">f</Text> force through · <Text color="cyan">P</Text> retry preflight</Text>
+            )}
+          </Box>
         )
       }
     >
@@ -238,6 +289,49 @@ export function Confirm() {
           {lanes.length > 10 && <Box><Text color="gray" dimColor>{'  '}+ {lanes.length - 10} more lanes (view all in .c1/config.json)</Text></Box>}
           {lanes.length === 0 && <Box><Text color="#ef4444" dimColor>{'  '}no lanes yet — press <Text color="cyan">m</Text> to open route picker</Text></Box>}
         </Box>
+      </Section>
+
+      <Section title={
+        preflight.status === 'running' ? 'Preflight (probing…)'
+        : preflightBlocking > 0 ? `Preflight — ${preflightBlocking} blocked`
+        : preflightWarnings > 0 ? `Preflight — ${preflightWarnings} warn`
+        : preflight.results.length > 0 ? 'Preflight — all green'
+        : 'Preflight'
+      }>
+        {preflight.status === 'idle' && (
+          <Text color="gray" dimColor>waiting to probe — 1-token check per lane before we spend real time on this run.</Text>
+        )}
+        {preflight.error && <Text color="#ef4444">preflight setup error: {preflight.error}</Text>}
+        {preflight.results.length > 0 && (
+          <Box flexDirection="column">
+            {preflight.results.slice(0, 12).map((r) => (
+              <Box key={r.laneKey}>
+                <Box width={3}>
+                  <Text color={r.result.ok ? '#22c55e' : (r.result.category === 'auth' || r.result.category === 'billing' || r.result.category === 'model-access') ? '#ef4444' : '#eab308'}>
+                    {r.result.ok ? '✓' : (r.result.category === 'auth' || r.result.category === 'billing' || r.result.category === 'model-access') ? '✗' : '⚠'}
+                  </Text>
+                </Box>
+                <Box width={44}>
+                  <Text color={r.result.ok ? 'gray' : 'white'}>
+                    {truncate(r.modelSlug, 24)} <Text color="gray" dimColor>@</Text> {truncate(r.destinationSlug.replace(/^direct:/,'') + (r.providerTag ? ` ${r.providerTag}` : ''), 18)}
+                  </Text>
+                </Box>
+                <Text color="gray">{r.result.message}{r.result.latencyMs != null ? ` (${r.result.latencyMs}ms)` : ''}</Text>
+              </Box>
+            ))}
+            {preflight.results.length > 12 && (
+              <Text color="gray" dimColor>  + {preflight.results.length - 12} more probes</Text>
+            )}
+            {preflightBlocking > 0 && (
+              <Box marginTop={1}>
+                <Text color="#ef4444" bold>⚠ {preflightBlocking} lane{preflightBlocking === 1 ? '' : 's'} will fail on billing/auth/model access.</Text>
+              </Box>
+            )}
+            {forceThrough && (
+              <Box><Text color="#eab308" bold>force mode ON — enter will launch despite failing lanes (press f to toggle)</Text></Box>
+            )}
+          </Box>
+        )}
       </Section>
 
       <Section title="Time">

@@ -11,6 +11,7 @@ import { loadCatalogs, type ProviderCatalogs } from '../scan/provider-catalog.js
 import { loadRoutePicks, saveRoutePicks } from '../scan/route-picks.js';
 import { buildRouteList, type Route } from '../data/route-index.js';
 import { fetchVercelEndpoints, type VercelEndpoint } from '../scan/vercel-endpoints.js';
+import { probeLanes, summarizePreflight, type PreflightResult } from '../proxy/preflight.js';
 import { runMethodology, isMethodologyFresh } from '../scan/methodology.js';
 import { RunEngine, type LaneSpec, type TaskSpec, type RunSpec } from '../runner/orchestrator.js';
 import type { CellState as EngineCellState, CellUpdate, StepUpdate, SessionKey } from '../runner/event-bus.js';
@@ -74,6 +75,16 @@ type State = {
    * Each route id = `${providerSlug}::${wireSlug}`.
    */
   pickedRouteIds: Set<string>;
+  /**
+   * Preflight probe results — one entry per picked lane keyed by laneKey.
+   * Populated by runPreflight(). Confirm gates 'enter RUN' on this so we
+   * don't launch a 20-min run against a suspended Fireworks account.
+   */
+  preflight: {
+    status: 'idle' | 'running' | 'done';
+    results: Array<{ laneKey: LaneKey; result: PreflightResult; modelSlug: string; destinationSlug: string; router: string; providerTag: string | null }>;
+    error: string | null;
+  };
   endpointStatusBySlug: Record<string, EndpointStatus>;
   endpointErrorBySlug: Record<string, string>;
   onboardingStep: number;
@@ -120,6 +131,10 @@ type State = {
   clearRoutePicks: () => Promise<void>;
   /** Computed on demand — the current picked routes as full Route objects. */
   pickedRoutes: () => Route[];
+  /** Build the LaneSpec[] the run would launch — used by preflight + startRun. */
+  buildLaneSpecs: () => Promise<{ lanes: LaneSpec[]; error?: string }>;
+  /** Fire probeLanes against the current lane build; populate `preflight` state. */
+  runPreflight: (skipLaneKeys?: Set<LaneKey>) => Promise<void>;
   loadEndpointsFor: (slugs: string[], force?: boolean) => Promise<void>;
   persistTaskSelection: () => Promise<void>;
   applyConfigToTasks: () => void;
@@ -274,6 +289,7 @@ export const useStore = create<State>((set, get) => ({
   providerCatalogs: {},
   vercelEndpointsBySlug: {},
   pickedRouteIds: new Set<string>(),
+  preflight: { status: 'idle', results: [], error: null },
   endpointStatusBySlug: {},
   endpointErrorBySlug: {},
   onboardingStep: 0,
@@ -445,6 +461,95 @@ export const useStore = create<State>((set, get) => ({
     const picked = s.pickedRouteIds;
     return all.filter((r) => picked.has(r.id));
   },
+  buildLaneSpecs: async (): Promise<{ lanes: LaneSpec[]; error?: string }> => {
+    const s = get();
+    const detected = await detectOrKey();
+    if (!detected.value) return { lanes: [], error: 'No OpenRouter key available — cannot build lanes.' };
+    const providerCatalogs = await loadCatalogs();
+    const lanes: LaneSpec[] = [];
+    const pickedRoutes = s.pickedRoutes();
+    if (pickedRoutes.length > 0) {
+      for (const route of pickedRoutes) {
+        const hydrated = await hydrateMultiRouterFields({
+          destSlug: route.providerSlug,
+          modelSlug: route.wireSlug,
+          catalogs: providerCatalogs,
+          orKey: detected.value,
+        });
+        if (hydrated.error) return { lanes: [], error: hydrated.error };
+        const fallbackModelPrice =
+          route.inputPrice != null && route.outputPrice != null
+            ? { input: route.inputPrice, output: route.outputPrice }
+            : null;
+        const routerLabel = route.providerSlug.startsWith('direct:') ? 'direct' : route.providerSlug;
+        const destinationSlug = route.variantSlug
+          ? `${route.providerSlug}:${route.variantSlug}`
+          : route.providerSlug;
+        lanes.push({
+          modelSlug: route.wireSlug,
+          destinationSlug,
+          router: routerLabel,
+          providerTag: route.variantSlug ?? null,
+          endpoint: null,
+          fallbackModelPrice,
+          forwardUrl: hydrated.forwardUrl,
+          apiKey: hydrated.apiKey,
+          modelSlugForForward: route.wireSlug,
+        });
+      }
+    } else {
+      for (const key of s.lanes()) {
+        const { model: modelSlug, dest: destSlug } = parseLane(key);
+        const endpoints = s.orCatalog?.endpointsBySlug?.[modelSlug]?.endpoints ?? [];
+        const modelMeta = s.orCatalog?.models.find((m) => m.slug === modelSlug) ?? null;
+        const [router, ...providerParts] = destSlug.split(':');
+        const providerTag = providerParts.join(':') || null;
+        const endpoint = endpoints.find((e) => e.providerTag === providerTag) ?? null;
+        const hydrated = await hydrateMultiRouterFields({
+          destSlug, modelSlug, catalogs: providerCatalogs, orKey: detected.value,
+        });
+        if (hydrated.error) return { lanes: [], error: hydrated.error };
+        const directPrice = destSlug.startsWith('direct:')
+          ? (DIRECT_PRICING[destSlug]?.[modelSlug] ?? null)
+          : null;
+        const fallbackModelPrice = directPrice
+          ?? (modelMeta ? { input: modelMeta.inputPrice, output: modelMeta.outputPrice } : null);
+        lanes.push({
+          modelSlug,
+          destinationSlug: destSlug,
+          router: router || 'openrouter',
+          providerTag,
+          endpoint,
+          fallbackModelPrice,
+          forwardUrl: hydrated.forwardUrl,
+          apiKey: hydrated.apiKey,
+          modelSlugForForward: hydrated.modelSlugForForward,
+        });
+      }
+    }
+    return { lanes };
+  },
+  runPreflight: async (skipLaneKeys?: Set<LaneKey>): Promise<void> => {
+    set({ preflight: { status: 'running', results: [], error: null } });
+    const { lanes, error } = await get().buildLaneSpecs();
+    if (error) {
+      set({ preflight: { status: 'done', results: [], error } });
+      return;
+    }
+    const filtered = skipLaneKeys
+      ? lanes.filter((l) => !skipLaneKeys.has(laneKey(l.modelSlug, l.destinationSlug)))
+      : lanes;
+    const probed = await probeLanes(filtered);
+    const results = probed.map(({ lane, result }) => ({
+      laneKey: laneKey(lane.modelSlug, lane.destinationSlug),
+      result,
+      modelSlug: lane.modelSlug,
+      destinationSlug: lane.destinationSlug,
+      router: lane.router,
+      providerTag: lane.providerTag,
+    }));
+    set({ preflight: { status: 'done', results, error: null } });
+  },
   /**
    * Refresh one provider's catalog with OR canonical slugs as alignment
    * targets, so Haiku maps direct-provider slugs onto OR's canonical form
@@ -614,88 +719,14 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
 
-    // Build LaneSpec[]. Route-first path (search UI) short-circuits the
-    // catalog reverse-lookup: each Route already carries its provider +
-    // wire slug + pricing. Legacy path (models × destinations) still hydrates
-    // via providers registry + provider-catalogs for cross-provider aggregation.
-    const providerCatalogs = await loadCatalogs();
-    const laneSpecs: LaneSpec[] = [];
-    if (useRoutes) {
-      for (const route of pickedRoutes) {
-        const hydrated = await hydrateMultiRouterFields({
-          destSlug: route.providerSlug,
-          modelSlug: route.wireSlug,
-          catalogs: providerCatalogs,
-          orKey: detected.value,
-        });
-        if (hydrated.error) {
-          set({ runError: hydrated.error });
-          return;
-        }
-        const fallbackModelPrice =
-          route.inputPrice != null && route.outputPrice != null
-            ? { input: route.inputPrice, output: route.outputPrice }
-            : null;
-        // For gateway variants (OR pinned to a provider tag / Vercel pinned to
-        // an underlying provider), thread the variant into providerTag so
-        // lane.ts sends the right routing hint on the wire.
-        const routerLabel = route.providerSlug.startsWith('direct:') ? 'direct' : route.providerSlug;
-        const destinationSlug = route.variantSlug
-          ? `${route.providerSlug}:${route.variantSlug}`
-          : route.providerSlug;
-        laneSpecs.push({
-          modelSlug: route.wireSlug,
-          destinationSlug,
-          router: routerLabel,
-          providerTag: route.variantSlug ?? null,
-          endpoint: null,
-          fallbackModelPrice,
-          forwardUrl: hydrated.forwardUrl,
-          apiKey: hydrated.apiKey,
-          modelSlugForForward: route.wireSlug,
-        });
-      }
-    } else {
-    for (const key of laneKeys) {
-      const { model: modelSlug, dest: destSlug } = parseLane(key);
-      const endpoints = s.orCatalog?.endpointsBySlug?.[modelSlug]?.endpoints ?? [];
-      const modelMeta = s.orCatalog?.models.find((m) => m.slug === modelSlug) ?? null;
-      const [router, ...providerParts] = destSlug.split(':');
-      const providerTag = providerParts.join(':') || null;
-      const endpoint = endpoints.find((e) => e.providerTag === providerTag) ?? null;
-
-      const hydrated = await hydrateMultiRouterFields({
-        destSlug,
-        modelSlug,
-        catalogs: providerCatalogs,
-        orKey: detected.value,
-      });
-      if (hydrated.error) {
-        set({ runError: hydrated.error });
-        return;
-      }
-
-      // Prefer DIRECT_PRICING for direct destinations; fall back to OR model
-      // pricing otherwise (or null → computeCost returns 0 → report shows `—`).
-      const directPrice = destSlug.startsWith('direct:')
-        ? (DIRECT_PRICING[destSlug]?.[modelSlug] ?? null)
-        : null;
-      const fallbackModelPrice = directPrice
-        ?? (modelMeta ? { input: modelMeta.inputPrice, output: modelMeta.outputPrice } : null);
-
-      laneSpecs.push({
-        modelSlug,
-        destinationSlug: destSlug,
-        router: router || 'openrouter',
-        providerTag,
-        endpoint,
-        fallbackModelPrice,
-        forwardUrl: hydrated.forwardUrl,
-        apiKey: hydrated.apiKey,
-        modelSlugForForward: hydrated.modelSlugForForward,
-      });
-    }
-    }
+    // Reuse the shared builder (also used by preflight). Any preflight
+    // "skip these lanes" filter has already been applied to pickedRouteIds;
+    // if the user explicitly forced-through, buildLaneSpecs still returns
+    // the full list.
+    const built = await get().buildLaneSpecs();
+    if (built.error) { set({ runError: built.error }); return; }
+    const laneSpecs = built.lanes;
+    if (laneSpecs.length === 0) { set({ runError: 'No lanes to run.' }); return; }
 
     const taskSpecs: TaskSpec[] = includedTasks.map((t) => ({
       id: t.id, file: t.file, summary: t.summary, usesLlm: t.usesLLM ?? false,
