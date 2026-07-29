@@ -58,7 +58,11 @@ export function Confirm() {
   const preflight = useStore((s) => s.preflight);
   const runPreflight = useStore((s) => s.runPreflight);
   const toggleRoutePick = useStore((s) => s.toggleRoutePick);
-  type EditField = 'cap' | 'parallelism' | 'repeats';
+  const pinTemperature = useStore((s) => s.pinTemperature);
+  const pinSeed = useStore((s) => s.pinSeed);
+  const setPinTemperature = useStore((s) => s.setPinTemperature);
+  const setPinSeed = useStore((s) => s.setPinSeed);
+  type EditField = 'cap' | 'parallelism' | 'repeats' | 'temperature' | 'seed';
   const [editing, setEditing] = useState<EditField | null>(null);
   const [draft, setDraft] = useState('');
   const [forceThrough, setForceThrough] = useState(false);
@@ -83,7 +87,12 @@ export function Confirm() {
   const useCatalog = orCatalog !== null && orCatalog.models.length > 0;
 
   const openEditor = (field: EditField) => {
-    const current = field === 'cap' ? maxSpend.toFixed(2) : field === 'parallelism' ? String(parallelism) : String(repeats);
+    const current = field === 'cap' ? maxSpend.toFixed(2)
+      : field === 'parallelism' ? String(parallelism)
+      : field === 'repeats' ? String(repeats)
+      : field === 'temperature' ? (pinTemperature == null ? '' : String(pinTemperature))
+      : field === 'seed' ? (pinSeed == null ? '' : String(pinSeed))
+      : '';
     setDraft(current);
     setEditing(field);
   };
@@ -97,6 +106,19 @@ export function Confirm() {
     } else if (editing === 'repeats') {
       const v = parseInt(draft, 10);
       if (!isNaN(v) && v > 0) setRepeats(v);
+    } else if (editing === 'temperature') {
+      // Empty draft clears the pin. Otherwise parse a float 0..2.
+      if (draft.trim().length === 0) setPinTemperature(null);
+      else {
+        const v = parseFloat(draft);
+        if (!isNaN(v)) setPinTemperature(v);
+      }
+    } else if (editing === 'seed') {
+      if (draft.trim().length === 0) setPinSeed(null);
+      else {
+        const v = parseInt(draft, 10);
+        if (!isNaN(v)) setPinSeed(v);
+      }
     }
     setEditing(null);
   };
@@ -106,7 +128,12 @@ export function Confirm() {
       if (key.return) { commitEditor(); return; }
       if (key.escape) { setEditing(null); return; }
       if (key.backspace || key.delete) { setDraft((d) => d.slice(0, -1)); return; }
-      const allowed = editing === 'cap' ? /^[\d.]$/ : /^[\d]$/;
+      // Temperature accepts float (0..2). Seed accepts integer, allow leading minus.
+      const allowed =
+        editing === 'cap' ? /^[\d.]$/ :
+        editing === 'temperature' ? /^[\d.]$/ :
+        editing === 'seed' ? /^[\d-]$/ :
+        /^[\d]$/;
       if (input && allowed.test(input)) setDraft((d) => d + input);
       return;
     }
@@ -127,6 +154,8 @@ export function Confirm() {
     else if (input === 'c') openEditor('cap');
     else if (input === 'p') openEditor('parallelism');
     else if (input === 'r') openEditor('repeats');
+    else if (input === 'T') openEditor('temperature');
+    else if (input === 'S') openEditor('seed');
     else if (input === 'P') { void runPreflight(); }        // manual retry
     else if (input === 's') {
       // Skip failing lanes — un-toggle their picks so buildLaneSpecs excludes them.
@@ -231,7 +260,14 @@ export function Confirm() {
       footer={
         editing ? (
           <Text color="cyan">
-            {editing === 'cap' ? 'New cap ($): ' : editing === 'parallelism' ? 'New parallelism: ' : 'New repeats: '}
+            {
+              editing === 'cap' ? 'New cap ($): '
+              : editing === 'parallelism' ? 'New parallelism: '
+              : editing === 'repeats' ? 'New repeats: '
+              : editing === 'temperature' ? 'Temperature (empty = clear pin, 0..2): '
+              : editing === 'seed' ? 'Seed (integer; empty = clear pin): '
+              : ''
+            }
             <Text color="white" bold>{draft}</Text><Text color="gray">▏</Text><Text color="gray"> · enter save · esc cancel</Text>
           </Text>
         ) : (
@@ -339,6 +375,21 @@ export function Confirm() {
       <Section title="Time">
         <Text>
           ~ <Text color="white" bold>{fmtDuration(seqSec)}</Text> sequential · with parallelism=<Text color="cyan" bold>{parallelism}</Text> (concurrent=<Text color="cyan">{effectiveConcurrency}</Text>): <Text color="cyan" bold>~ {fmtDuration(parSec)}</Text> wall-clock <Text color="gray" dimColor>(press <Text color="cyan">p</Text> to change)</Text>
+        </Text>
+      </Section>
+
+      <Section title="Sampling pins">
+        <Text>
+          temperature: {pinTemperature == null
+            ? <Text color="gray" dimColor>not pinned (each provider's default)</Text>
+            : <Text color="white" bold>{pinTemperature}</Text>}
+          {' '}<Text color="gray" dimColor>(press </Text><Text color="cyan">T</Text><Text color="gray" dimColor>)</Text>
+        </Text>
+        <Text>
+          seed: {pinSeed == null
+            ? <Text color="gray" dimColor>not pinned</Text>
+            : <Text color="white" bold>{pinSeed}</Text>}
+          {' '}<Text color="gray" dimColor>(press </Text><Text color="cyan">S</Text><Text color="gray" dimColor>; not all providers honor `seed` — sessions that vary word-for-word on the same lane mean the provider ignored it)</Text>
         </Text>
       </Section>
 

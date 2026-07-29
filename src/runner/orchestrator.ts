@@ -46,6 +46,14 @@ export interface LaneSpec {
    * `modelSlug` when unset.
    */
   modelSlugForForward?: string;
+  /**
+   * Run-wide sampling pins. When set, lane.ts forces these fields onto the
+   * outbound body, overriding whatever the subprocess sent. Enables
+   * fair-fight comparisons where all providers sample from the same
+   * (temperature, seed) policy.
+   */
+  pinTemperature?: number;
+  pinSeed?: number;
 }
 
 export interface TaskSpec {
@@ -321,6 +329,8 @@ export class RunEngine {
           // existing single-router runs keep working unchanged.
           forwardUrl: s.lane.forwardUrl ?? OR_CHAT_COMPLETIONS_URL,
           apiKey: s.lane.apiKey ?? spec.orKey,
+          pinTemperature: s.lane.pinTemperature,
+          pinSeed: s.lane.pinSeed,
           onStep: (delta) => {
             this.bus.emit('session:step', {
               key: sessionKey(s),

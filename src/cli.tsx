@@ -18,6 +18,12 @@ const cli = meow(
     --rescan-methodology        force re-run of methodology detection (bypasses cache)
     --wizard                    walk through onboarding + methodology + task pick again
                                 (default: skip when the target has a complete cache)
+    --temperature <n>           pin sampling temperature (0..2) on every lane. Overrides
+                                the subprocess's request. Also editable interactively
+                                on Confirm (press T).
+    --seed <n>                  pin sampling seed (integer). Not all providers honor;
+                                repeats that differ word-for-word mean it was ignored.
+                                Also editable on Confirm (press S).
     --start <screen>            jump straight to a screen (apiKeys|onboarding|summarizeTasks|methodologyCheck|pickTasks|taskDetail|pickRoutes|pickModels|pickDestinations|confirm|liveProgress)
     --help
   `,
@@ -29,6 +35,8 @@ const cli = meow(
       rescan: { type: 'boolean', default: false },
       rescanMethodology: { type: 'boolean', default: false },
       wizard: { type: 'boolean', default: false },
+      temperature: { type: 'number' },
+      seed: { type: 'number' },
       start: { type: 'string' },
     },
   },
@@ -45,6 +53,8 @@ useStore.setState({
   forceRescan: cli.flags.rescan,
   forceRescanMethodology: cli.flags.rescanMethodology,
   forceWizard: cli.flags.wizard,
+  ...(cli.flags.temperature !== undefined ? { pinTemperature: cli.flags.temperature } : {}),
+  ...(cli.flags.seed !== undefined ? { pinSeed: cli.flags.seed } : {}),
 });
 
 if (cli.flags.start) {

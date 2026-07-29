@@ -92,6 +92,15 @@ type State = {
   selectedModels: Set<string>;                            // model slugs
   selectedDestinations: Record<string, Set<string>>;      // modelSlug -> Set<destSlug>
   repeats: number;
+  /**
+   * Run-wide sampling pins injected into every lane's chat.completions body.
+   * null = don't inject (let the target subprocess's request stand). When set,
+   * lane.ts forces the value onto the outbound body regardless of what the
+   * subprocess sent — that's the point, we want to control the sampling
+   * policy for a fair-fight comparison.
+   */
+  pinTemperature: number | null;
+  pinSeed: number | null;
   parallelism: number;
   maxSpend: number;
   focusedTaskId: string | null;
@@ -146,6 +155,8 @@ type State = {
   setMaxSpend: (v: number) => void;
   setParallelism: (v: number) => void;
   setRepeats: (v: number) => void;
+  setPinTemperature: (v: number | null) => void;
+  setPinSeed: (v: number | null) => void;
   lanes: () => LaneKey[];
   startRun: () => Promise<void>;
   abortRun: () => void;
@@ -297,6 +308,8 @@ export const useStore = create<State>((set, get) => ({
   selectedModels: new Set<string>(),
   selectedDestinations: {},
   repeats: 3,
+  pinTemperature: null,
+  pinSeed: null,
   parallelism: 3,
   maxSpend: 10,
   focusedTaskId: null,
@@ -495,6 +508,8 @@ export const useStore = create<State>((set, get) => ({
           forwardUrl: hydrated.forwardUrl,
           apiKey: hydrated.apiKey,
           modelSlugForForward: route.wireSlug,
+          pinTemperature: s.pinTemperature ?? undefined,
+          pinSeed: s.pinSeed ?? undefined,
         });
       }
     } else {
@@ -524,6 +539,8 @@ export const useStore = create<State>((set, get) => ({
           forwardUrl: hydrated.forwardUrl,
           apiKey: hydrated.apiKey,
           modelSlugForForward: hydrated.modelSlugForForward,
+          pinTemperature: s.pinTemperature ?? undefined,
+          pinSeed: s.pinSeed ?? undefined,
         });
       }
     }
@@ -681,6 +698,8 @@ export const useStore = create<State>((set, get) => ({
   setMaxSpend: (v) => set({ maxSpend: v }),
   setParallelism: (v) => set({ parallelism: Math.max(1, Math.min(32, Math.floor(v))) }),
   setRepeats: (v) => set({ repeats: Math.max(1, Math.min(20, Math.floor(v))) }),
+  setPinTemperature: (v) => set({ pinTemperature: v === null ? null : Math.max(0, Math.min(2, v)) }),
+  setPinSeed: (v) => set({ pinSeed: v === null ? null : Math.floor(v) }),
   lanes: () => {
     const s = get();
     const out: LaneKey[] = [];

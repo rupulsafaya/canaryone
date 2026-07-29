@@ -34,6 +34,12 @@ export interface LaneConfig {
   /** Bearer token for the provider. Was hard-coded to spec.orKey pre-A5. */
   apiKey: string;
   /**
+   * Run-wide sampling pins. When set, the outbound body's temperature/seed
+   * are forced to these values (overriding whatever the subprocess sent).
+   */
+  pinTemperature?: number;
+  pinSeed?: number;
+  /**
    * Called after each successful chat/completions response with per-request
    * deltas. Used by the orchestrator to emit session:step so LiveProgress
    * can show live token / cost / step counts instead of waiting until the
@@ -170,12 +176,15 @@ async function handleChatCompletions(
 
   // Rewrite: model (per-provider wire slug) + gateway routing hints (varies
   // by router). Both OR and Vercel accept an underlying-provider filter but
-  // in different fields — direct providers ignore both.
+  // in different fields — direct providers ignore both. Also inject any
+  // run-wide sampling pins so all lanes sample from the same policy.
   const rewritten: Record<string, unknown> = {
     ...inbound,
     model: cfg.modelSlugForForward,
     stream: false,   // M1 forces non-streaming; streaming lands in D4.
   };
+  if (cfg.pinTemperature !== undefined) rewritten.temperature = cfg.pinTemperature;
+  if (cfg.pinSeed !== undefined) rewritten.seed = cfg.pinSeed;
   if (cfg.router === 'openrouter' && cfg.providerTag) {
     rewritten.provider = { order: [cfg.providerTag] };
   } else if (cfg.router === 'vercel' && cfg.providerTag) {
