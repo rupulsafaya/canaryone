@@ -377,5 +377,61 @@ tests.push(['L. MethodologyCheck: hardcoded fixture blocks with file/line + sugg
   });
 }]);
 
+// --- Scenario N: ApiKeys screen renders + nav skips coming-soon rows ---
+tests.push(['N. ApiKeys: 11 rows in two groups; nav skips Bedrock (coming-soon)', async () => {
+  const hadBackup = await backupHomeEnv();
+  try {
+    await withScratchDir(async (scratchDir) => {
+      const t = spawnTui(['--start', 'apiKeys', '--config-dir', scratchDir, '--target', TARGET_REAL]);
+      try {
+        await t.waitFor('API keys', 6000);
+        await t.waitFor('Routers', 3000);
+        await t.waitFor('Direct Providers', 3000);
+
+        // All 4 routers present, incl. Bedrock as coming-soon.
+        await t.waitFor('OpenRouter', 3000);
+        await t.waitFor('Vercel', 3000);
+        await t.waitFor('Cloudflare', 3000);
+        await t.waitFor(/Bedrock.*coming soon/, 3000);
+
+        // All 7 direct-provider rows (moonshot intl+cn collapse into one).
+        await t.waitFor(/Moonshot \(intl \+ cn\)/, 3000);
+        await t.waitFor('Nebius', 3000);
+        await t.waitFor('Fireworks', 3000);
+        await t.waitFor('Together', 3000);
+        await t.waitFor('Groq', 3000);
+        await t.waitFor('DeepSeek', 3000);
+        await t.waitFor('Cerebras', 3000);
+        await t.waitFor('More coming soon', 3000);
+
+        // Enter is gated on OR key present. With scratchDir + backed-up
+        // HOME_ENV, no OR key is set → footer must show "OR required".
+        await t.waitFor('OR required', 3000);
+
+        // Down-arrow 3× MUST skip Bedrock (coming-soon). Reset buffer so we
+        // only inspect the current-frame render, not accumulated history.
+        t.reset();
+        t.sendKey('down');  // vercel
+        await t.sleep(50);
+        t.sendKey('down');  // cloudflare
+        await t.sleep(50);
+        t.sendKey('down');  // should skip bedrock → moonshot
+        await t.sleep(300);
+        const screen = t.screen();
+        // Cursor glyph "▸" must be on Moonshot, NOT on Bedrock.
+        if (/▸[\s]*Bedrock/.test(screen)) {
+          throw new Error(`cursor landed on Bedrock — nav should skip coming-soon rows.\n${screen.slice(-1600)}`);
+        }
+        if (!/▸[\s]*Moonshot/.test(screen)) {
+          throw new Error(`cursor did not land on Moonshot after 3 downs.\n${screen.slice(-1600)}`);
+        }
+
+        t.send('q');
+        await t.waitExit(3000);
+      } finally { t.kill(); }
+    });
+  } finally { await restoreHomeEnv(hadBackup); }
+}]);
+
 console.log('Running TUI tests via node-pty...\n');
 await runTests(tests);

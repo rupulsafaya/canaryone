@@ -14,7 +14,7 @@ export type CatalogStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type EndpointStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type MethodologyStatus = 'idle' | 'loading' | 'ready' | 'blocked' | 'error';
 
-export type Screen = 'keySetup' | 'onboarding' | 'summarizeTasks' | 'methodologyCheck' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'pickDestinations' | 'confirm' | 'liveProgress';
+export type Screen = 'keySetup' | 'apiKeys' | 'onboarding' | 'summarizeTasks' | 'methodologyCheck' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'pickDestinations' | 'confirm' | 'liveProgress';
 
 // A lane = one (model, destination) tuple we test. Each lane is a row in LiveProgress.
 // Destination slug already encodes (router, provider), so lane key = `${modelSlug}@${destSlug}`.

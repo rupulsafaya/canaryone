@@ -16,7 +16,7 @@ const cli = meow(
     --config-dir <dir>          where .c1/ lives (default: <target>/.c1)
     --rescan                    force re-run of deterministic scan
     --rescan-methodology        force re-run of methodology detection (bypasses cache)
-    --start <screen>            jump straight to a screen (onboarding|summarizeTasks|methodologyCheck|pickTasks|taskDetail|pickModels|pickDestinations|confirm|liveProgress)
+    --start <screen>            jump straight to a screen (apiKeys|onboarding|summarizeTasks|methodologyCheck|pickTasks|taskDetail|pickModels|pickDestinations|confirm|liveProgress)
     --help
   `,
   {
@@ -44,7 +44,7 @@ useStore.setState({
 });
 
 if (cli.flags.start) {
-  const valid = ['keySetup', 'onboarding', 'summarizeTasks', 'methodologyCheck', 'pickTasks', 'taskDetail', 'pickModels', 'pickDestinations', 'confirm', 'liveProgress'] as const;
+  const valid = ['keySetup', 'apiKeys', 'onboarding', 'summarizeTasks', 'methodologyCheck', 'pickTasks', 'taskDetail', 'pickModels', 'pickDestinations', 'confirm', 'liveProgress'] as const;
   if (valid.includes(cli.flags.start as any)) {
     // Downstream screens need pre-populated selection to have anything to
     // render. Seed the demo/fixture selection so `--start pickDestinations`
