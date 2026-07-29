@@ -56,6 +56,10 @@ type Mode =
 export function ApiKeys() {
   const goTo = useStore((s) => s.goTo);
   const setOrKey = useStore((s) => s.setOrKey);
+  const providerCatalogs = useStore((s) => s.providerCatalogs);
+  const orCatalog = useStore((s) => s.orCatalog);
+  const loadProviderCatalogs = useStore((s) => s.loadProviderCatalogs);
+  const loadCatalog = useStore((s) => s.loadCatalog);
 
   const rows = useMemo<RowSpec[]>(() => buildRows(), []);
   const [rowStates, setRowStates] = useState<Record<string, RowState>>(() => initialRowStates(rows));
@@ -74,6 +78,27 @@ export function ApiKeys() {
     })();
     return () => { cancelled = true; };
   }, [rows]);
+
+  // Prime catalog data so row counts render. Both are cache-first:
+  // orCatalog uses ~/.c1/or-catalog.json (24h TTL) and providerCatalogs
+  // uses ~/.c1/provider-catalogs.json — no network unless stale.
+  useEffect(() => { void loadProviderCatalogs(); }, [loadProviderCatalogs]);
+  useEffect(() => { void loadCatalog(); }, [loadCatalog]);
+
+  // Compute per-row model count from whichever catalog owns that provider.
+  const modelCounts = useMemo<Record<string, number | null>>(() => {
+    const out: Record<string, number | null> = {};
+    for (const row of rows) {
+      if (row.status !== 'shipped') { out[row.id] = null; continue; }
+      if (row.representativeSlug === 'openrouter') {
+        out[row.id] = orCatalog?.models.length ?? null;
+      } else {
+        const cat = providerCatalogs[row.representativeSlug];
+        out[row.id] = cat?.models_raw.length ?? null;
+      }
+    }
+    return out;
+  }, [rows, providerCatalogs, orCatalog]);
 
   const patchRow = (id: string, partial: Partial<RowState> | { status: RowStatus }) => {
     setRowStates((prev) => ({
@@ -331,7 +356,7 @@ export function ApiKeys() {
       <Box marginTop={1} />
 
       {mode.kind === 'browse' && (
-        <RowList rows={rows} rowStates={rowStates} selectedIx={selectedIx} />
+        <RowList rows={rows} rowStates={rowStates} selectedIx={selectedIx} modelCounts={modelCounts} />
       )}
 
       {mode.kind === 'paste' && (
@@ -518,10 +543,12 @@ function RowList({
   rows,
   rowStates,
   selectedIx,
+  modelCounts,
 }: {
   rows: RowSpec[];
   rowStates: Record<string, RowState>;
   selectedIx: number;
+  modelCounts: Record<string, number | null>;
 }) {
   const routers = rows.filter((r) => r.group === 'Routers');
   const directs = rows.filter((r) => r.group === 'Direct Providers');
@@ -530,13 +557,13 @@ function RowList({
       <Text color="#94a3b8" bold>Routers</Text>
       {routers.map((row) => {
         const ix = rows.indexOf(row);
-        return <Row key={row.id} row={row} state={rowStates[row.id]} selected={ix === selectedIx} />;
+        return <Row key={row.id} row={row} state={rowStates[row.id]} selected={ix === selectedIx} count={modelCounts[row.id]} />;
       })}
       <Box marginTop={1} />
       <Text color="#94a3b8" bold>Direct Providers</Text>
       {directs.map((row) => {
         const ix = rows.indexOf(row);
-        return <Row key={row.id} row={row} state={rowStates[row.id]} selected={ix === selectedIx} />;
+        return <Row key={row.id} row={row} state={rowStates[row.id]} selected={ix === selectedIx} count={modelCounts[row.id]} />;
       })}
       <Text color="gray" dimColor>  More coming soon</Text>
     </Box>
@@ -547,24 +574,43 @@ function Row({
   row,
   state,
   selected,
+  count,
 }: {
   row: RowSpec;
   state: RowState | undefined;
   selected: boolean;
+  count: number | null | undefined;
 }) {
   const cursor = selected ? '▸' : ' ';
   const isGrey = row.status !== 'shipped';
   const nameColor = isGrey ? 'gray' : selected ? '#f472b6' : 'white';
   const status = state?.status ?? { kind: 'missing' as const };
+  const countLabel = renderCountLabel(count, status);
 
   return (
     <Box>
       <Box width={2}><Text color="#f472b6">{cursor}</Text></Box>
       <Box width={28}><Text color={nameColor} dimColor={isGrey}>{row.displayName}</Text></Box>
-      <Box width={26}>{renderStatusBadge(status, row)}</Box>
+      <Box width={22}>{renderStatusBadge(status, row)}</Box>
+      <Box width={14}>{countLabel}</Box>
       <Box flexGrow={1}>{renderStatusTail(status, row, state)}</Box>
     </Box>
   );
+}
+
+function renderCountLabel(
+  count: number | null | undefined,
+  status: RowStatus,
+): React.ReactNode {
+  // Only show counts for rows whose token is present (missing/partial rows
+  // haven't fetched their catalog yet — showing a stale OR count would be
+  // misleading, and 0 would look like an error).
+  const rowIsSet = status.kind === 'set'
+    || status.kind === 'set-validated'
+    || status.kind === 'set-unverified';
+  if (!rowIsSet) return <Text> </Text>;
+  if (count == null) return <Text color="gray" dimColor>—</Text>;
+  return <Text color="#94a3b8">{count.toLocaleString()} models</Text>;
 }
 
 function renderStatusBadge(status: RowStatus, row: RowSpec): React.ReactNode {
