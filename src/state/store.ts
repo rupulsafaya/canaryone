@@ -45,6 +45,12 @@ type State = {
   orCatalog: OrCatalog | null;
   orCatalogStatus: CatalogStatus;
   orCatalogError: string | null;
+  /**
+   * Multi-router provider catalogs (~/.c1/provider-catalogs.json). Populated
+   * by loadProviderCatalogs — called on first PickDestinations mount so
+   * direct/vercel/cloudflare routes can appear alongside OR endpoints.
+   */
+  providerCatalogs: ProviderCatalogs;
   endpointStatusBySlug: Record<string, EndpointStatus>;
   endpointErrorBySlug: Record<string, string>;
   onboardingStep: number;
@@ -82,6 +88,7 @@ type State = {
   setMatchedFiles: (files: MatchedFile[]) => void;
   loadMethodology: (force?: boolean) => Promise<void>;
   loadCatalog: (force?: boolean) => Promise<void>;
+  loadProviderCatalogs: () => Promise<void>;
   loadEndpointsFor: (slugs: string[], force?: boolean) => Promise<void>;
   persistTaskSelection: () => Promise<void>;
   applyConfigToTasks: () => void;
@@ -232,6 +239,7 @@ export const useStore = create<State>((set, get) => ({
   orCatalog: null,
   orCatalogStatus: 'idle',
   orCatalogError: null,
+  providerCatalogs: {},
   endpointStatusBySlug: {},
   endpointErrorBySlug: {},
   onboardingStep: 0,
@@ -316,6 +324,10 @@ export const useStore = create<State>((set, get) => ({
     } catch (e) {
       set({ orCatalogStatus: 'error', orCatalogError: e instanceof Error ? e.message : String(e) });
     }
+  },
+  loadProviderCatalogs: async () => {
+    const cats = await loadCatalogs();
+    set({ providerCatalogs: cats });
   },
   loadEndpointsFor: async (slugs, force = false) => {
     const s = get();

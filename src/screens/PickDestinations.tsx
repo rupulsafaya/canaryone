@@ -14,6 +14,8 @@ import {
 } from '../data/fixtures.js';
 import { readCachedEndpoints } from '../scan/or-catalog.js';
 import type { OrEndpoint, OrCatalog } from '../data/schema.js';
+import type { ProviderCatalogs } from '../scan/provider-catalog.js';
+import { directRoutesFor, directRouteToDestination, orderDirectDestinations } from '../data/model-index.js';
 import { SCREEN_ACCENT, familyColor } from '../data/colors.js';
 import { Frame } from '../components/Frame.tsx';
 import { ScrollHint } from '../components/ScrollHint.tsx';
@@ -54,19 +56,42 @@ function endpointsToDestinations(endpoints: OrEndpoint[]): Destination[] {
   }));
 }
 
-/** Prefer real OR endpoints; fall back to fixture data if not yet loaded. */
-function resolveDestinations(orCatalog: OrCatalog | null, modelSlug: string, isCatalogModel: boolean): {
-  destinations: Destination[];
-  isReal: boolean;
-} {
-  if (orCatalog) {
-    const cached = readCachedEndpoints(orCatalog, modelSlug);
-    if (cached) return { destinations: endpointsToDestinations(cached), isReal: true };
-  }
-  // No live endpoints yet. If we're using catalog-driven models, don't return
-  // fixture data (it's misleading) — return empty so the loading state renders.
-  if (isCatalogModel) return { destinations: [], isReal: false };
-  return { destinations: fixtureDestinations(modelSlug), isReal: false };
+/** Prefer real OR endpoints; fall back to fixture data if not yet loaded.
+ *  Appends direct-provider destinations from provider-catalogs.json when
+ *  they exist so PickDestinations can offer OR + direct in one list.
+ */
+function resolveDestinations(
+  orCatalog: OrCatalog | null,
+  modelSlug: string,
+  isCatalogModel: boolean,
+  providerCatalogs: ProviderCatalogs,
+): { destinations: Destination[]; isReal: boolean } {
+  const orDestinations: Destination[] = (() => {
+    if (orCatalog) {
+      const cached = readCachedEndpoints(orCatalog, modelSlug);
+      if (cached) return endpointsToDestinations(cached);
+    }
+    if (isCatalogModel) return [];
+    return fixtureDestinations(modelSlug);
+  })();
+
+  // Append any direct-provider routes discovered for this canonical slug.
+  const directRoutes = directRoutesFor(modelSlug, providerCatalogs);
+  const directDestinations = orderDirectDestinations(
+    directRoutes.map((r) => directRouteToDestination(r, modelSlug)),
+  );
+
+  // Ordering: first-party direct first, then OR routes, then non-first-party
+  // direct — matches SPEC §11 with a minor concession (Vercel/CF gateways
+  // land alongside OR since they're not shipped as separate routes in this
+  // lean A7). Refine once buildModelIndex lands in a follow-up.
+  const firstPartyDirect = directDestinations.filter((d) => d.isFirstParty);
+  const otherDirect = directDestinations.filter((d) => !d.isFirstParty);
+  const combined = [...firstPartyDirect, ...orDestinations, ...otherDirect];
+
+  const isReal = orCatalog !== null && (orDestinations.length > 0 || directDestinations.length > 0)
+    || (!isCatalogModel && orDestinations.length > 0);
+  return { destinations: combined, isReal };
 }
 
 export function PickDestinations() {
@@ -80,6 +105,8 @@ export function PickDestinations() {
   const endpointStatusBySlug = useStore((s) => s.endpointStatusBySlug);
   const endpointErrorBySlug = useStore((s) => s.endpointErrorBySlug);
   const loadEndpointsFor = useStore((s) => s.loadEndpointsFor);
+  const providerCatalogs = useStore((s) => s.providerCatalogs);
+  const loadProviderCatalogs = useStore((s) => s.loadProviderCatalogs);
   const [cursor, setCursor] = useState(0);
   const [, termRows] = useTerminalDimensions();
 
@@ -91,13 +118,17 @@ export function PickDestinations() {
     if (modelSlugs.length > 0) void loadEndpointsFor(modelSlugs);
   }, [modelSlugs, loadEndpointsFor]);
 
+  // Prime the direct-provider catalog cache once. Cheap fs read from
+  // ~/.c1/provider-catalogs.json — no network calls.
+  useEffect(() => { void loadProviderCatalogs(); }, [loadProviderCatalogs]);
+
   // When real endpoints arrive, clear any stale destination slugs that don't
   // exist in the fetched provider list (leftover from --start seeding or the
   // fixture era). Do NOT auto-pick a replacement — the user must select one.
   useEffect(() => {
     if (!orCatalog) return;
     for (const slug of modelSlugs) {
-      const { destinations, isReal } = resolveDestinations(orCatalog, slug, useCatalog);
+      const { destinations, isReal } = resolveDestinations(orCatalog, slug, useCatalog, providerCatalogs);
       if (!isReal || destinations.length === 0) continue;
       const cur = selectedDestinations[slug];
       if (!cur || cur.size === 0) continue;
@@ -113,7 +144,7 @@ export function PickDestinations() {
     for (const model of modelSlugs) {
       out.push({ kind: 'model', modelSlug: model });
       const status = endpointStatusBySlug[model];
-      const { destinations, isReal } = resolveDestinations(orCatalog, model, useCatalog);
+      const { destinations, isReal } = resolveDestinations(orCatalog, model, useCatalog, providerCatalogs);
       if (useCatalog && !isReal && (status === 'loading' || status === 'idle' || status === undefined)) {
         out.push({ kind: 'loading', modelSlug: model });
         continue;
@@ -127,7 +158,7 @@ export function PickDestinations() {
       }
     }
     return out;
-  }, [modelSlugs, orCatalog, endpointStatusBySlug, endpointErrorBySlug, useCatalog]);
+  }, [modelSlugs, orCatalog, endpointStatusBySlug, endpointErrorBySlug, useCatalog, providerCatalogs]);
 
   const destRowIndices = useMemo(() => rows.map((r, i) => ({ r, i })).filter((x) => x.r.kind === 'destination').map((x) => x.i), [rows]);
 
@@ -167,7 +198,7 @@ export function PickDestinations() {
     let total = 0;
     for (const model of selectedModels) {
       const dests = selectedDestinations[model] ?? new Set<string>();
-      const { destinations } = resolveDestinations(orCatalog, model, useCatalog);
+      const { destinations } = resolveDestinations(orCatalog, model, useCatalog, providerCatalogs);
       for (const destSlug of dests) {
         const d = destinations.find((x) => x.slug === destSlug);
         if (!d) continue;
@@ -176,7 +207,7 @@ export function PickDestinations() {
     }
     total += JUDGE_COST_PER_TASK * includedTasks.length * totalLanes * repeats;
     return total;
-  }, [selectedModels, selectedDestinations, includedTasks.length, repeats, totalLanes, orCatalog, useCatalog]);
+  }, [selectedModels, selectedDestinations, includedTasks.length, repeats, totalLanes, orCatalog, useCatalog, providerCatalogs]);
 
   const anyLoading = modelSlugs.some((s) => endpointStatusBySlug[s] === 'loading');
 
@@ -223,7 +254,7 @@ export function PickDestinations() {
           const fixtureModel = FIXTURE_ALL.find((m) => m.slug === row.modelSlug);
           const model = catalogModel ?? fixtureModel;
           if (!model) return null;
-          const { destinations, isReal } = resolveDestinations(orCatalog, row.modelSlug, useCatalog);
+          const { destinations, isReal } = resolveDestinations(orCatalog, row.modelSlug, useCatalog, providerCatalogs);
           const picked = selectedDestinations[row.modelSlug]?.size ?? 0;
           return (
             <Box key={`m${i}`} marginTop={offset === 0 || i === 0 ? 0 : 1} flexShrink={0}>
@@ -254,7 +285,7 @@ export function PickDestinations() {
           );
         }
         // row.kind === 'destination'
-        const { destinations } = resolveDestinations(orCatalog, row.modelSlug, useCatalog);
+        const { destinations } = resolveDestinations(orCatalog, row.modelSlug, useCatalog, providerCatalogs);
         const dest = destinations.find((d) => d.slug === row.destSlug);
         if (!dest) return null;
         const active = i === focusedRowIdx;
