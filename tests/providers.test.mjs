@@ -22,7 +22,7 @@ async function main() {
   const all = providers.listAllProviders();
   const routerCount = all.filter((p) => p.kind === 'router').length;
   const directCount = all.filter((p) => p.kind === 'direct').length;
-  assert(routerCount === 4, `expected 4 routers, got ${routerCount}`);
+  assert(routerCount === 3, `expected 3 routers, got ${routerCount}`);
   assert(directCount === 8, `expected 8 direct providers, got ${directCount}`);
 
   // ---------- getProvider — router variants ----------
@@ -38,15 +38,19 @@ async function main() {
   assert(v?.forwardUrlTemplate === 'https://ai-gateway.vercel.sh/v1/chat/completions',
     `vercel forwardUrl should use ai-gateway.vercel.sh, got ${v?.forwardUrlTemplate}`);
 
-  const cf = providers.getProvider('cloudflare');
-  assert(cf?.slug === 'cloudflare' && cf?.extraEnvs.includes('CLOUDFLARE_ACCOUNT_ID'),
-    'cloudflare requires CLOUDFLARE_ACCOUNT_ID as extra env');
-  assert(cf?.primaryEnv === 'CLOUDFLARE_API_TOKEN',
-    `cloudflare primaryEnv should be CLOUDFLARE_API_TOKEN, got ${cf?.primaryEnv}`);
-  assert(cf?.catalogNeedsAuth === true, 'cloudflare catalog requires auth');
+  // Cloudflare removed 2026-07-29 — most Workers AI models are Paid-plan only.
+  assert(providers.getProvider('cloudflare') === undefined,
+    'cloudflare should no longer be registered');
 
   const bedrock = providers.getProvider('bedrock');
-  assert(bedrock?.status === 'coming-soon', 'bedrock is coming-soon');
+  assert(bedrock?.status === 'shipped',
+    `bedrock now shipped as OpenAI-compat gateway, got ${bedrock?.status}`);
+  assert(bedrock?.primaryEnv === 'AWS_BEARER_TOKEN_BEDROCK',
+    `bedrock primary env should be AWS_BEARER_TOKEN_BEDROCK, got ${bedrock?.primaryEnv}`);
+  assert(bedrock?.extraEnvs.includes('AWS_REGION'),
+    'bedrock requires AWS_REGION as extra env');
+  assert(bedrock?.forwardUrlTemplate.includes('bedrock-runtime.{AWS_REGION}.amazonaws.com/openai/v1/chat/completions'),
+    `bedrock forward URL should hit OpenAI-compat endpoint, got ${bedrock?.forwardUrlTemplate}`);
 
   // ---------- getProvider — direct variants ----------
   const moon = providers.getProvider('direct:moonshot-intl');
@@ -114,12 +118,12 @@ async function main() {
   const straight = await providers.resolveUrlTemplate('https://openrouter.ai/api/v1/credits');
   assert(straight === 'https://openrouter.ai/api/v1/credits', 'no-placeholder template passthrough');
 
-  // CF placeholder — resolves when env is set.
-  await fs.appendFile(envPath, 'CLOUDFLARE_ACCOUNT_ID=abc123\n');
-  const cfUrl = await providers.resolveUrlTemplate(
-    'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/models/search');
-  assert(cfUrl === 'https://api.cloudflare.com/client/v4/accounts/abc123/ai/models/search',
-    `resolved CF url wrong: ${cfUrl}`);
+  // AWS_REGION placeholder — resolves when env is set (Bedrock uses this shape).
+  await fs.appendFile(envPath, 'AWS_REGION=us-west-2\n');
+  const bedUrl = await providers.resolveUrlTemplate(
+    'https://bedrock-runtime.{AWS_REGION}.amazonaws.com/openai/v1/chat/completions');
+  assert(bedUrl === 'https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1/chat/completions',
+    `resolved Bedrock url wrong: ${bedUrl}`);
 
   // Placeholder can't be filled → null (surface as partial config).
   const bad = await providers.resolveUrlTemplate(

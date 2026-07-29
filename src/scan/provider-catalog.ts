@@ -339,10 +339,11 @@ export async function refreshAllConfigured(
 
 /**
  * Pull an array of model-ID strings from any of the common response shapes:
- *   OpenAI-compat: { data: [{ id, ... }] }
- *   Cloudflare success envelope: { result: [{ id, ... }], success: true }
- *   Cloudflare with ?format=openrouter: { result: { data: [{ id, ... }] } }
- *   OR /api/v1/models: { data: [{ id, ... }] }  (same as OpenAI-compat)
+ *   OpenAI-compat:   { data: [{ id, ... }] }
+ *   Bedrock:         { modelSummaries: [{ modelId, ... }] }
+ *   Cloudflare:      { result: [{ id, ... }], success: true }
+ *   CF openrouter:   { result: { data: [{ id, ... }] } }
+ *   OR /v1/models:   { data: [{ id, ... }] }  (same as OpenAI-compat)
  */
 export function extractSlugs(body: unknown): string[] {
   if (!body || typeof body !== 'object') return [];
@@ -350,6 +351,7 @@ export function extractSlugs(body: unknown): string[] {
   const candidates: unknown[] = [
     b.data,
     b.models,
+    b.modelSummaries,                                        // AWS Bedrock ListFoundationModels
     (b.result as Record<string, unknown> | undefined)?.data,
     b.result,
   ];
@@ -359,7 +361,7 @@ export function extractSlugs(body: unknown): string[] {
         .map((item) => {
           if (item && typeof item === 'object') {
             const rec = item as Record<string, unknown>;
-            const id = rec.id ?? rec.name ?? rec.model;
+            const id = rec.id ?? rec.modelId ?? rec.name ?? rec.model;
             return typeof id === 'string' ? id : null;
           }
           return typeof item === 'string' ? item : null;

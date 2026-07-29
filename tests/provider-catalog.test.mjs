@@ -256,43 +256,48 @@ async function main() {
     globalThis.fetch = originalFetch;
   }
 
-  // ---------- refreshCatalog — CF requires CLOUDFLARE_ACCOUNT_ID placeholder ----------
+  // ---------- refreshCatalog — Bedrock requires AWS_REGION placeholder ----------
+  // (Same URL-template semantics that CF used pre-2026-07-29; Bedrock's OpenAI-
+  // compat gateway inherited the {ENV_VAR} substitution path.)
   await fs.rm(cachePath, { force: true });
-  // No CLOUDFLARE_ACCOUNT_ID env — resolveUrlTemplate returns null → fetch throws.
-  delete process.env.CLOUDFLARE_ACCOUNT_ID;
-  const cfNoAcct = await cat.refreshCatalog(
-    'cloudflare',
-    'cf-tok',
+  delete process.env.AWS_REGION;
+  const bedNoRegion = await cat.refreshCatalog(
+    'bedrock',
+    'aws-tok',
     { orKey: 'sk-or-test', callHaiku: stubHaiku, cachePath },
   );
-  assert(cfNoAcct.entry.errors && cfNoAcct.entry.errors[0].includes('missing env var'),
-    'CF without account_id → clear error');
+  assert(bedNoRegion.entry.errors && bedNoRegion.entry.errors[0].includes('missing env var'),
+    'Bedrock without AWS_REGION → clear error');
 
-  // With CLOUDFLARE_ACCOUNT_ID set, catalog URL resolves.
-  process.env.CLOUDFLARE_ACCOUNT_ID = 'cf-acct-abc';
-  const cfCalls = [];
+  // With AWS_REGION set, catalog URL resolves and modelSummaries shape parses.
+  process.env.AWS_REGION = 'us-west-2';
+  const bedCalls = [];
   globalThis.fetch = async (url, init) => {
-    cfCalls.push({ url, headers: init?.headers ?? {} });
+    bedCalls.push({ url, headers: init?.headers ?? {} });
     return new Response(JSON.stringify({
-      result: { data: [{ id: '@cf/moonshotai/kimi-k3' }] },
-      success: true,
+      modelSummaries: [
+        { modelId: 'openai.gpt-oss-120b-1:0', modelName: 'gpt-oss 120b' },
+        { modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0', modelName: 'Claude 3.5 Sonnet' },
+      ],
     }), { status: 200 });
   };
   try {
-    const cfOk = await cat.refreshCatalog(
-      'cloudflare',
-      'cf-tok',
+    const bedOk = await cat.refreshCatalog(
+      'bedrock',
+      'aws-tok',
       { orKey: 'sk-or-test', callHaiku: stubHaiku, cachePath },
     );
-    assert(String(cfCalls[0].url).includes('/accounts/cf-acct-abc/'),
-      `CF URL should include account_id, got ${cfCalls[0].url}`);
-    assert(cfCalls[0].headers.Authorization === 'Bearer cf-tok',
-      'CF catalog uses Bearer auth');
-    assert(cfOk.entry.models_raw[0] === '@cf/moonshotai/kimi-k3',
-      'CF wrapped-envelope shape parsed');
+    assert(String(bedCalls[0].url).includes('bedrock.us-west-2.amazonaws.com/foundation-models'),
+      `Bedrock URL should include region + control-plane host, got ${bedCalls[0].url}`);
+    assert(bedCalls[0].headers.Authorization === 'Bearer aws-tok',
+      'Bedrock catalog uses Bearer auth');
+    assert(bedOk.entry.models_raw.length === 2,
+      `Bedrock modelSummaries shape should yield 2 slugs, got ${bedOk.entry.models_raw.length}`);
+    assert(bedOk.entry.models_raw.includes('openai.gpt-oss-120b-1:0'),
+      'Bedrock catalog should include gpt-oss slug');
   } finally {
     globalThis.fetch = originalFetch;
-    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    delete process.env.AWS_REGION;
   }
 
   await fs.rm(tmpHome, { recursive: true, force: true });

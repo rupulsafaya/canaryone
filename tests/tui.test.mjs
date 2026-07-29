@@ -379,8 +379,8 @@ tests.push(['L. MethodologyCheck: hardcoded fixture blocks with file/line + sugg
   });
 }]);
 
-// --- Scenario N: ApiKeys screen renders + nav skips coming-soon rows ---
-tests.push(['N. ApiKeys: 11 rows in two groups; nav skips Bedrock (coming-soon)', async () => {
+// --- Scenario N: ApiKeys screen renders 3 routers + 7 direct providers ---
+tests.push(['N. ApiKeys: 3 routers + 7 direct providers render in two groups', async () => {
   const hadBackup = await backupHomeEnv();
   try {
     await withScratchDir(async (scratchDir) => {
@@ -390,11 +390,10 @@ tests.push(['N. ApiKeys: 11 rows in two groups; nav skips Bedrock (coming-soon)'
         await t.waitFor('Routers', 3000);
         await t.waitFor('Direct Providers', 3000);
 
-        // All 4 routers present, incl. Bedrock as coming-soon.
+        // 3 shipped routers (CF removed 2026-07-29; Bedrock shipped as OpenAI-compat).
         await t.waitFor('OpenRouter', 3000);
         await t.waitFor('Vercel', 3000);
-        await t.waitFor('Cloudflare', 3000);
-        await t.waitFor(/Bedrock.*coming soon/, 3000);
+        await t.waitFor(/AWS Bedrock/, 3000);
 
         // All 7 direct-provider rows (moonshot intl+cn collapse into one).
         await t.waitFor(/Moonshot \(intl \+ cn\)/, 3000);
@@ -410,22 +409,15 @@ tests.push(['N. ApiKeys: 11 rows in two groups; nav skips Bedrock (coming-soon)'
         // HOME_ENV, no OR key is set → footer must show "OR required".
         await t.waitFor('OR required', 3000);
 
-        // Down-arrow 3× MUST skip Bedrock (coming-soon). Reset buffer so we
-        // only inspect the current-frame render, not accumulated history.
+        // Two down-arrows land on Bedrock (all rows now shipped/navigable).
         t.reset();
         t.sendKey('down');  // vercel
         await t.sleep(50);
-        t.sendKey('down');  // cloudflare
-        await t.sleep(50);
-        t.sendKey('down');  // should skip bedrock → moonshot
+        t.sendKey('down');  // bedrock
         await t.sleep(300);
         const screen = t.screen();
-        // Cursor glyph "▸" must be on Moonshot, NOT on Bedrock.
-        if (/▸[\s]*Bedrock/.test(screen)) {
-          throw new Error(`cursor landed on Bedrock — nav should skip coming-soon rows.\n${screen.slice(-1600)}`);
-        }
-        if (!/▸[\s]*Moonshot/.test(screen)) {
-          throw new Error(`cursor did not land on Moonshot after 3 downs.\n${screen.slice(-1600)}`);
+        if (!/▸[\s]*AWS Bedrock/.test(screen)) {
+          throw new Error(`cursor did not land on Bedrock after 2 downs.\n${screen.slice(-1600)}`);
         }
 
         t.send('q');

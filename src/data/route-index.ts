@@ -80,8 +80,22 @@ export function familyFromSlug(slug: string): string {
 const ROUTER_BADGES: Record<string, string> = {
   openrouter: 'via OR',
   vercel: 'Vercel',
-  cloudflare: 'CF Workers AI',
+  bedrock: 'Bedrock',
 };
+
+/**
+ * Router-specific route filter. Bedrock's catalog lists every foundation
+ * model, but only gpt-oss models are served on the OpenAI-compat endpoint
+ * we ship — others need the Converse translator (not yet wired). Filter so
+ * PickRoutes only shows runnable routes.
+ */
+function isRouteRunnable(providerSlug: string, wireSlug: string): boolean {
+  if (providerSlug === 'bedrock') {
+    const s = wireSlug.toLowerCase();
+    return s.includes('gpt-oss') || s.includes('openai');
+  }
+  return true;
+}
 
 /**
  * Build the unified route list from all loaded catalogs. Called by PickRoutes
@@ -120,6 +134,7 @@ export function buildRouteList(orCatalog: OrCatalog | null, providerCatalogs: Pr
     if (!cat) continue;
     const providerDisplayName = displayNameFor(providerSlug);
     for (const wireSlug of cat.models_raw) {
+      if (!isRouteRunnable(providerSlug, wireSlug)) continue;
       const family = familyFromSlug(wireSlug);
       const priceKey = tryDirectPriceKey(providerSlug, wireSlug);
       const price = priceKey ? DIRECT_PRICING[providerSlug]?.[priceKey] ?? null : null;
@@ -160,7 +175,7 @@ function displayNameFor(providerSlug: string): string {
 function providerOrder(providerSlug: string): number {
   if (providerSlug === 'openrouter') return 0;
   if (providerSlug === 'vercel') return 1;
-  if (providerSlug === 'cloudflare') return 2;
+  if (providerSlug === 'bedrock') return 2;
   return 10;
 }
 

@@ -81,29 +81,33 @@ export const ROUTERS: RouterEntry[] = [
     catalogUrlTemplate: 'https://ai-gateway.vercel.sh/v1/models',
     catalogNeedsAuth: false,
   },
-  {
-    kind: 'router',
-    slug: 'cloudflare',
-    displayName: 'Cloudflare Workers AI',
-    status: 'shipped',
-    primaryEnv: 'CLOUDFLARE_API_TOKEN',
-    extraEnvs: ['CLOUDFLARE_ACCOUNT_ID'],
-    forwardUrlTemplate: 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1/chat/completions',
-    validationUrlTemplate: 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/models/search?format=openrouter&per_page=1',
-    catalogUrlTemplate: 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/models/search?format=openrouter&per_page=500',
-    catalogNeedsAuth: true,
-  },
+  // Cloudflare Workers AI removed 2026-07-29 — most Workers AI models
+  // require a Workers Paid plan ($5/mo) and 403 on Free, so the row was
+  // more misleading than useful. Bring it back if we settle on a paid-only
+  // demo target; the code paths in lane.ts / providers.ts still support
+  // the (single-token + account_id) shape.
+  //
+  // AWS Bedrock — ships as the OpenAI-compat endpoint (only gpt-oss models
+  // are served here; other foundation models like Claude/Llama use Bedrock's
+  // native Converse API which needs a translator not yet wired). Routes are
+  // filtered to gpt-oss in data/route-index.ts so PickRoutes only shows
+  // what will actually run. See AWS docs:
+  // https://docs.aws.amazon.com/bedrock/latest/userguide/inference-openai.html
   {
     kind: 'router',
     slug: 'bedrock',
     displayName: 'AWS Bedrock',
-    status: 'coming-soon',
-    primaryEnv: 'AWS_BEDROCK_API_KEY',
-    extraEnvs: [],
-    forwardUrlTemplate: '',
-    validationUrlTemplate: '',
-    catalogUrlTemplate: '',
-    catalogNeedsAuth: false,
+    status: 'shipped',
+    primaryEnv: 'AWS_BEARER_TOKEN_BEDROCK',
+    extraEnvs: ['AWS_REGION'],
+    // OpenAI-compat chat completions. Region in URL; token in Bearer header.
+    forwardUrlTemplate: 'https://bedrock-runtime.{AWS_REGION}.amazonaws.com/openai/v1/chat/completions',
+    // Validation + catalog both hit the control plane's ListFoundationModels.
+    // Different host (`bedrock.` not `bedrock-runtime.`) but the same Bearer
+    // token works for both per AWS's bearer-token doc.
+    validationUrlTemplate: 'https://bedrock.{AWS_REGION}.amazonaws.com/foundation-models',
+    catalogUrlTemplate: 'https://bedrock.{AWS_REGION}.amazonaws.com/foundation-models',
+    catalogNeedsAuth: true,
   },
 ];
 

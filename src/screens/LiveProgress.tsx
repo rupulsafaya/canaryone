@@ -362,9 +362,8 @@ function shortRouter(r: string | undefined) {
   switch (r) {
     case 'openrouter': return 'OR';
     case 'vercel':     return 'Vrc';
-    case 'cloudflare': return 'CF';
+    case 'bedrock':    return 'AWS';
     case 'direct':     return 'dir';
-    case 'bedrock':    return 'bed';
     case 'vertex':     return 'ver';
     case 'azure':      return 'azr';
     default:           return '?';
@@ -373,7 +372,6 @@ function shortRouter(r: string | undefined) {
 function routerTagColor(r: string | undefined) {
   if (r === 'direct') return '#a78bfa';
   if (r === 'vercel') return '#60a5fa';
-  if (r === 'cloudflare') return '#f97316';
   if (r === 'bedrock') return '#f97316';
   if (r === 'vertex') return '#4ade80';
   if (r === 'azure') return '#60a5fa';
