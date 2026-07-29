@@ -7,6 +7,8 @@ import { loadOrCatalog, fetchModelEndpoints, readCachedEndpoints } from '../scan
 import { detectOrKey, writeConfig } from './../scan/orchestrator.js';
 import { getProvider, resolveUrlTemplate, readEnv, DIRECT_PRICING } from '../proxy/providers.js';
 import { loadCatalogs, type ProviderCatalogs } from '../scan/provider-catalog.js';
+import { loadRoutePicks, saveRoutePicks } from '../scan/route-picks.js';
+import { buildRouteList, type Route } from '../data/route-index.js';
 import { runMethodology, isMethodologyFresh } from '../scan/methodology.js';
 import { RunEngine, type LaneSpec, type TaskSpec, type RunSpec } from '../runner/orchestrator.js';
 import type { CellState as EngineCellState, CellUpdate, StepUpdate, SessionKey } from '../runner/event-bus.js';
@@ -16,7 +18,7 @@ export type CatalogStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type EndpointStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type MethodologyStatus = 'idle' | 'loading' | 'ready' | 'blocked' | 'error';
 
-export type Screen = 'keySetup' | 'apiKeys' | 'onboarding' | 'summarizeTasks' | 'methodologyCheck' | 'pickTasks' | 'taskDetail' | 'pickModels' | 'pickDestinations' | 'confirm' | 'liveProgress';
+export type Screen = 'keySetup' | 'apiKeys' | 'onboarding' | 'summarizeTasks' | 'methodologyCheck' | 'pickTasks' | 'taskDetail' | 'pickRoutes' | 'pickModels' | 'pickDestinations' | 'confirm' | 'liveProgress';
 
 // A lane = one (model, destination) tuple we test. Each lane is a row in LiveProgress.
 // Destination slug already encodes (router, provider), so lane key = `${modelSlug}@${destSlug}`.
@@ -51,6 +53,12 @@ type State = {
    * direct/vercel/cloudflare routes can appear alongside OR endpoints.
    */
   providerCatalogs: ProviderCatalogs;
+  /**
+   * Search-first route picks (persist across sessions in ~/.c1/picks.json).
+   * Replaces selectedModels + selectedDestinations for the default flow.
+   * Each route id = `${providerSlug}::${wireSlug}`.
+   */
+  pickedRouteIds: Set<string>;
   endpointStatusBySlug: Record<string, EndpointStatus>;
   endpointErrorBySlug: Record<string, string>;
   onboardingStep: number;
@@ -90,6 +98,11 @@ type State = {
   loadCatalog: (force?: boolean) => Promise<void>;
   loadProviderCatalogs: () => Promise<void>;
   refreshProviderCatalog: (providerSlug: string, token: string | null) => Promise<void>;
+  loadRoutePicks: () => Promise<void>;
+  toggleRoutePick: (routeId: string) => Promise<void>;
+  clearRoutePicks: () => Promise<void>;
+  /** Computed on demand — the current picked routes as full Route objects. */
+  pickedRoutes: () => Route[];
   loadEndpointsFor: (slugs: string[], force?: boolean) => Promise<void>;
   persistTaskSelection: () => Promise<void>;
   applyConfigToTasks: () => void;
@@ -241,6 +254,7 @@ export const useStore = create<State>((set, get) => ({
   orCatalogStatus: 'idle',
   orCatalogError: null,
   providerCatalogs: {},
+  pickedRouteIds: new Set<string>(),
   endpointStatusBySlug: {},
   endpointErrorBySlug: {},
   onboardingStep: 0,
@@ -329,6 +343,27 @@ export const useStore = create<State>((set, get) => ({
   loadProviderCatalogs: async () => {
     const cats = await loadCatalogs();
     set({ providerCatalogs: cats });
+  },
+  loadRoutePicks: async () => {
+    const p = await loadRoutePicks();
+    set({ pickedRouteIds: new Set(p.picked) });
+  },
+  toggleRoutePick: async (routeId: string) => {
+    const next = new Set(get().pickedRouteIds);
+    if (next.has(routeId)) next.delete(routeId);
+    else next.add(routeId);
+    set({ pickedRouteIds: next });
+    await saveRoutePicks({ picked: [...next] });
+  },
+  clearRoutePicks: async () => {
+    set({ pickedRouteIds: new Set() });
+    await saveRoutePicks({ picked: [] });
+  },
+  pickedRoutes: (): Route[] => {
+    const s = get();
+    const all = buildRouteList(s.orCatalog, s.providerCatalogs);
+    const picked = s.pickedRouteIds;
+    return all.filter((r) => picked.has(r.id));
   },
   /**
    * Refresh one provider's catalog with OR canonical slugs as alignment
@@ -473,7 +508,15 @@ export const useStore = create<State>((set, get) => ({
   startRun: async () => {
     const s = get();
     const includedTasks = s.tasks.filter((t) => t.included);
-    const laneKeys = s.lanes();
+
+    // Prefer picked routes (search-first flow). Fall back to legacy
+    // models × destinations if the user came via PickModels/PickDestinations.
+    const pickedRoutes = s.pickedRoutes();
+    const useRoutes = pickedRoutes.length > 0;
+    const laneKeys = useRoutes
+      ? pickedRoutes.map((r) => laneKey(r.wireSlug, r.providerSlug))
+      : s.lanes();
+
     if (!includedTasks.length || !laneKeys.length) {
       set({ runError: 'No tasks or lanes selected — cannot start run.' });
       return;
@@ -488,14 +531,41 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
 
-    // Build LaneSpec[] from selected models × destinations, hydrating:
-    //   - OR catalog metadata (per-provider endpoint pricing + model-level $/M)
-    //   - A5 multi-router fields: forwardUrl, apiKey, modelSlugForForward
-    //   - DIRECT_PRICING for direct-provider fallback cost math
-    // Fail-hard on missing keys — PickDestinations should have filtered these,
-    // but if they slip through, name the ApiKeys screen in the error.
+    // Build LaneSpec[]. Route-first path (search UI) short-circuits the
+    // catalog reverse-lookup: each Route already carries its provider +
+    // wire slug + pricing. Legacy path (models × destinations) still hydrates
+    // via providers registry + provider-catalogs for cross-provider aggregation.
     const providerCatalogs = await loadCatalogs();
     const laneSpecs: LaneSpec[] = [];
+    if (useRoutes) {
+      for (const route of pickedRoutes) {
+        const hydrated = await hydrateMultiRouterFields({
+          destSlug: route.providerSlug,
+          modelSlug: route.wireSlug,
+          catalogs: providerCatalogs,
+          orKey: detected.value,
+        });
+        if (hydrated.error) {
+          set({ runError: hydrated.error });
+          return;
+        }
+        const fallbackModelPrice =
+          route.inputPrice != null && route.outputPrice != null
+            ? { input: route.inputPrice, output: route.outputPrice }
+            : null;
+        laneSpecs.push({
+          modelSlug: route.wireSlug,
+          destinationSlug: route.providerSlug,
+          router: route.providerSlug.startsWith('direct:') ? 'direct' : route.providerSlug,
+          providerTag: null,
+          endpoint: null,
+          fallbackModelPrice,
+          forwardUrl: hydrated.forwardUrl,
+          apiKey: hydrated.apiKey,
+          modelSlugForForward: route.wireSlug,
+        });
+      }
+    } else {
     for (const key of laneKeys) {
       const { model: modelSlug, dest: destSlug } = parseLane(key);
       const endpoints = s.orCatalog?.endpointsBySlug?.[modelSlug]?.endpoints ?? [];
@@ -534,6 +604,7 @@ export const useStore = create<State>((set, get) => ({
         apiKey: hydrated.apiKey,
         modelSlugForForward: hydrated.modelSlugForForward,
       });
+    }
     }
 
     const taskSpecs: TaskSpec[] = includedTasks.map((t) => ({

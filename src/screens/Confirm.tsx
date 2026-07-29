@@ -96,8 +96,8 @@ export function Confirm() {
     }
     if (key.return) startRun();
     else if (input === 't') goTo('pickTasks');
-    else if (input === 'm') goTo('pickModels');
-    else if (input === 'h') goTo('pickDestinations');
+    else if (input === 'm') goTo('pickRoutes');
+    else if (input === 'h') goTo('pickRoutes');
     else if (input === 'c') openEditor('cap');
     else if (input === 'p') openEditor('parallelism');
     else if (input === 'r') openEditor('repeats');

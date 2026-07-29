@@ -435,5 +435,37 @@ tests.push(['N. ApiKeys: 11 rows in two groups; nav skips Bedrock (coming-soon)'
   } finally { await restoreHomeEnv(hadBackup); }
 }]);
 
+// --- Scenario O: PickRoutes search-first flow (renders + filters + toggles) ---
+tests.push(['O. PickRoutes: search-first flow filters + toggle updates pick count', async () => {
+  await withScratchDir(async (scratchDir) => {
+    const t = spawnTui(['--start', 'pickRoutes', '--config-dir', scratchDir, '--target', TARGET_REAL], { clearAuth: false });
+    try {
+      await t.waitFor('Pick routes', 8000);
+      await t.waitFor('Search:', 3000);
+      // Filter narrows the list.
+      t.send('kimi');
+      await t.waitFor(/kimi/i, 5000);
+      await t.waitFor(/match|routes across/, 3000);
+      // Space toggles the first result — subtitle should update to "1 pick".
+      t.send(' ');
+      await t.waitFor(/1 pick/, 3000);
+      // Toggle back off.
+      t.send(' ');
+      await t.waitFor(/0 picks/, 3000);
+      // Esc clears the query first, then goes back on second press.
+      t.sendKey('esc');
+      await t.sleep(150);
+      t.sendKey('esc');
+      await t.sleep(300);
+      // We're on methodology or something else — just verify we left PickRoutes.
+      const scr = t.screen();
+      if (/Pick routes/.test(scr.slice(-500))) throw new Error('did not leave PickRoutes on double-esc');
+      // Ctrl-C exits.
+      t.send('\x03');
+      await t.waitExit(3000);
+    } finally { t.kill(); }
+  });
+}]);
+
 console.log('Running TUI tests via node-pty...\n');
 await runTests(tests);

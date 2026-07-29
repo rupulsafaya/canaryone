@@ -45,7 +45,7 @@ export function PickTasks() {
     else if (key.return) {
       if (picked > 0) {
         void persistTaskSelection();
-        goTo('pickModels');
+        goTo('pickRoutes');
       }
     }
     else if (input === 'b' || key.escape) goTo('onboarding');
