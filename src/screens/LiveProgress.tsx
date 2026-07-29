@@ -359,8 +359,23 @@ function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
 }
 function shortRouter(r: string | undefined) {
-  return r === 'openrouter' ? 'OR' : r === 'direct' ? 'dir' : r === 'bedrock' ? 'bed' : r === 'vertex' ? 'ver' : r === 'azure' ? 'azr' : 'OR';
+  switch (r) {
+    case 'openrouter': return 'OR';
+    case 'vercel':     return 'Vrc';
+    case 'cloudflare': return 'CF';
+    case 'direct':     return 'dir';
+    case 'bedrock':    return 'bed';
+    case 'vertex':     return 'ver';
+    case 'azure':      return 'azr';
+    default:           return '?';
+  }
 }
 function routerTagColor(r: string | undefined) {
-  return r === 'direct' ? '#a78bfa' : r === 'bedrock' ? '#f97316' : r === 'vertex' ? '#4ade80' : r === 'azure' ? '#60a5fa' : '#22d3ee';
+  if (r === 'direct') return '#a78bfa';
+  if (r === 'vercel') return '#60a5fa';
+  if (r === 'cloudflare') return '#f97316';
+  if (r === 'bedrock') return '#f97316';
+  if (r === 'vertex') return '#4ade80';
+  if (r === 'azure') return '#60a5fa';
+  return '#22d3ee';
 }

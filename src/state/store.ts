@@ -25,7 +25,12 @@ export type Screen = 'keySetup' | 'apiKeys' | 'onboarding' | 'summarizeTasks' | 
 export type LaneKey = string;
 export const laneKey = (model: string, dest: string): LaneKey => `${model}@${dest}`;
 export const parseLane = (key: LaneKey): { model: string; dest: string } => {
-  const at = key.indexOf('@');
+  // Use lastIndexOf so wire slugs that start with '@' (e.g. Cloudflare's
+  // `@cf/zai-org/glm-5.2`) don't have their leading `@` mistaken for the
+  // model/dest separator, which would wipe the model column and pollute
+  // the dest column with the wire slug.
+  const at = key.lastIndexOf('@');
+  if (at < 0) return { model: key, dest: '' };
   return { model: key.slice(0, at), dest: key.slice(at + 1) };
 };
 
