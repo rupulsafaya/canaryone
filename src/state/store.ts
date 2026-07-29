@@ -519,7 +519,10 @@ export const useStore = create<State>((set, get) => ({
     const pickedRoutes = s.pickedRoutes();
     const useRoutes = pickedRoutes.length > 0;
     const laneKeys = useRoutes
-      ? pickedRoutes.map((r) => laneKey(r.wireSlug, r.providerSlug))
+      ? pickedRoutes.map((r) => laneKey(
+          r.wireSlug,
+          r.variantSlug ? `${r.providerSlug}:${r.variantSlug}` : r.providerSlug,
+        ))
       : s.lanes();
 
     if (!includedTasks.length || !laneKeys.length) {
@@ -558,11 +561,18 @@ export const useStore = create<State>((set, get) => ({
           route.inputPrice != null && route.outputPrice != null
             ? { input: route.inputPrice, output: route.outputPrice }
             : null;
+        // For gateway variants (OR pinned to a provider tag / Vercel pinned to
+        // an underlying provider), thread the variant into providerTag so
+        // lane.ts sends the right routing hint on the wire.
+        const routerLabel = route.providerSlug.startsWith('direct:') ? 'direct' : route.providerSlug;
+        const destinationSlug = route.variantSlug
+          ? `${route.providerSlug}:${route.variantSlug}`
+          : route.providerSlug;
         laneSpecs.push({
           modelSlug: route.wireSlug,
-          destinationSlug: route.providerSlug,
-          router: route.providerSlug.startsWith('direct:') ? 'direct' : route.providerSlug,
-          providerTag: null,
+          destinationSlug,
+          router: routerLabel,
+          providerTag: route.variantSlug ?? null,
           endpoint: null,
           fallbackModelPrice,
           forwardUrl: hydrated.forwardUrl,

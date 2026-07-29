@@ -12,14 +12,14 @@
 // (Vercel + CF return it in the same payload; we currently discard). For
 // now, non-OR routes show '—' pricing.
 
-import type { OrCatalog } from './schema.js';
+import type { OrCatalog, OrEndpoint } from './schema.js';
 import type { ProviderCatalogs } from '../scan/provider-catalog.js';
 import { ROUTERS, DIRECT_PROVIDERS, DIRECT_PRICING } from '../proxy/providers.js';
 
 export interface Route {
-  /** Stable primary key. Format: `${providerSlug}::${wireSlug}` — never collides across providers. */
+  /** Stable primary key. Format: `${providerSlug}::${wireSlug}` (or `...::variant::${variantSlug}` for gateway underlying-provider routes). */
   id: string;
-  /** Provider registry slug: 'openrouter' | 'vercel' | 'cloudflare' | 'direct:<name>'. */
+  /** Provider registry slug: 'openrouter' | 'vercel' | 'bedrock' | 'direct:<name>'. */
   providerSlug: string;
   /** Short display badge shown next to the route: 'via OR', 'Vercel', 'Fireworks', etc. */
   providerDisplayName: string;
@@ -40,6 +40,20 @@ export interface Route {
   outputPrice: number | null;
   /** Family bucket for coloring. Best-effort derived from slug. */
   family: string;
+  /**
+   * Gateway underlying-provider filter, when this Route pins a specific
+   * upstream provider inside a gateway (OR / Vercel). Absent for direct
+   * providers or "let the gateway pick" routes.
+   *   OR:      variantSlug = the OR provider tag ('baseten/fp8')
+   *            lane.ts sends `provider.order = [variantSlug]`
+   *   Vercel:  variantSlug = the Vercel provider slug ('fireworks')
+   *            lane.ts sends `providerOptions.gateway.only = [variantSlug]`
+   */
+  variantSlug?: string;
+  /** Human-readable variant label ('Baseten (fp8)', 'Morph', ...). Displayed inline with providerDisplayName. */
+  variantLabel?: string;
+  /** Per-variant uptime % (from OR endpoints call). Optional. */
+  variantUptime?: number | null;
   /** Search-optimized haystack: lowercase concat of every user-visible field. */
   searchText: string;
 }
@@ -105,7 +119,9 @@ function isRouteRunnable(providerSlug: string, wireSlug: string): boolean {
 export function buildRouteList(orCatalog: OrCatalog | null, providerCatalogs: ProviderCatalogs): Route[] {
   const routes: Route[] = [];
 
-  // OR routes — one per OR canonical model. Pricing from OR catalog.
+  // OR routes — one "auto-route" per canonical model, plus N variant routes
+  // per model that has per-endpoint data loaded (populated on demand by
+  // store.loadEndpointsFor).
   if (orCatalog) {
     for (const model of orCatalog.models) {
       routes.push({
@@ -120,6 +136,13 @@ export function buildRouteList(orCatalog: OrCatalog | null, providerCatalogs: Pr
         family: model.family || familyFromSlug(model.slug),
         searchText: [model.slug, model.displayName, model.family, 'openrouter', 'via OR'].join(' ').toLowerCase(),
       });
+      // Variant routes for this model, if endpoints are cached.
+      const endpoints = orCatalog.endpointsBySlug?.[model.slug]?.endpoints;
+      if (endpoints && endpoints.length > 0) {
+        for (const ep of endpoints) {
+          routes.push(orVariantRoute(model.slug, model.displayName || model.slug, model.family || familyFromSlug(model.slug), ep));
+        }
+      }
     }
   }
 
@@ -170,6 +193,30 @@ function displayNameFor(providerSlug: string): string {
     return entry?.displayName ?? providerSlug.replace(/^direct:/, '');
   }
   return providerSlug;
+}
+
+function orVariantRoute(
+  modelSlug: string,
+  displayName: string,
+  family: string,
+  endpoint: OrEndpoint,
+): Route {
+  const label = endpoint.displayName || endpoint.provider;
+  return {
+    id: `openrouter::${modelSlug}::variant::${endpoint.providerTag}`,
+    providerSlug: 'openrouter',
+    providerDisplayName: 'via OR',
+    wireSlug: modelSlug,
+    canonicalSlug: modelSlug,
+    displayName: `${displayName}  ↳ ${label}`,
+    inputPrice: endpoint.inputPrice > 0 ? endpoint.inputPrice : null,
+    outputPrice: endpoint.outputPrice > 0 ? endpoint.outputPrice : null,
+    family,
+    variantSlug: endpoint.providerTag,
+    variantLabel: label,
+    variantUptime: endpoint.uptimePct30m,
+    searchText: [modelSlug, displayName, family, 'openrouter', 'via OR', endpoint.provider, endpoint.providerTag, label].join(' ').toLowerCase(),
+  };
 }
 
 function providerOrder(providerSlug: string): number {

@@ -24,6 +24,8 @@ export function PickRoutes() {
   const loadProviderCatalogs = useStore((s) => s.loadProviderCatalogs);
   const loadRoutePicks = useStore((s) => s.loadRoutePicks);
   const toggleRoutePick = useStore((s) => s.toggleRoutePick);
+  const loadEndpointsFor = useStore((s) => s.loadEndpointsFor);
+  const endpointStatusBySlug = useStore((s) => s.endpointStatusBySlug);
   const tasks = useStore((s) => s.tasks);
   const repeats = useStore((s) => s.repeats);
   const goTo = useStore((s) => s.goTo);
@@ -35,6 +37,33 @@ export function PickRoutes() {
   useEffect(() => { void loadCatalog(); }, [loadCatalog]);
   useEffect(() => { void loadProviderCatalogs(); }, [loadProviderCatalogs]);
   useEffect(() => { void loadRoutePicks(); }, [loadRoutePicks]);
+
+  // When the user's filter narrows to a small OR-model set, auto-fetch
+  // per-endpoint data so variant rows can render underneath. Debounced
+  // to avoid a burst of fetches while typing.
+  const orMatches = useMemo(() => {
+    if (!orCatalog) return [] as string[];
+    const q = query.trim().toLowerCase();
+    if (!q || q.length < 2) return [];
+    const tokens = q.split(/\s+/);
+    return orCatalog.models
+      .filter((m) => {
+        const hay = (m.slug + ' ' + (m.displayName ?? '') + ' ' + m.family).toLowerCase();
+        return tokens.every((t) => hay.includes(t));
+      })
+      .map((m) => m.slug);
+  }, [query, orCatalog]);
+  useEffect(() => {
+    if (orMatches.length === 0 || orMatches.length > 5) return;
+    const need = orMatches.filter((s) => {
+      const st = endpointStatusBySlug[s];
+      const cached = orCatalog?.endpointsBySlug?.[s]?.endpoints;
+      return st !== 'loading' && st !== 'ready' && !cached;
+    });
+    if (need.length === 0) return;
+    const timer = setTimeout(() => { void loadEndpointsFor(need); }, 300);
+    return () => clearTimeout(timer);
+  }, [orMatches, endpointStatusBySlug, orCatalog, loadEndpointsFor]);
 
   const allRoutes = useMemo(
     () => buildRouteList(orCatalog, providerCatalogs),
