@@ -17,6 +17,8 @@ import { createWorktree, ensureDepsCache, symlinkNodeModules, gcOldWorktrees } f
 import { startLane } from '../proxy/lane.js';
 import { runSession, taskFileInWorktree } from './subprocess.js';
 import { RunEventBus, type SessionKey, type CellUpdate, type CellState } from './event-bus.js';
+import { JudgeWorkerPool } from '../judge/worker.js';
+import { captureGitDiff, type GitDiffSummary } from '../judge/git-diff.js';
 
 // Per-lane timeout ceiling from SPEC §13.4. Defaults to 6 min; per-lane overrides
 // come in a later milestone (D5+).
@@ -49,6 +51,10 @@ export interface RunSpec {
   orKey: string;
   runnerCmd: string;
   sessionTimeoutMs?: number;
+  /** Optional OR key for the judge (separate from the runner's key). Falls back to orKey. */
+  judgeKey?: string;
+  /** Set true to skip the judge entirely (used by tests that don't want to pay for Haiku). */
+  disableJudge?: boolean;
 }
 
 export interface RunResult {
@@ -125,6 +131,11 @@ export class RunEngine {
     const timeoutMs = spec.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS;
     let passed = 0, failed = 0, aborted = 0, totalCost = 0;
 
+    // Judge worker pool — runs alongside the runner, drains before run:complete.
+    const judgeKey = spec.judgeKey ?? process.env.OR_JUDGE_KEY ?? spec.orKey;
+    const judgeEnabled = !spec.disableJudge && !!judgeKey;
+    const judgePool = judgeEnabled ? new JudgeWorkerPool({ db, bus: this.bus, concurrency: 3 }) : null;
+
     const parallelism = Math.max(1, Math.min(spec.parallelism, 16));
     let cursor = 0;
     const worker = async () => {
@@ -139,11 +150,28 @@ export class RunEngine {
         if (outcome.state === 'passed') passed++;
         else if (outcome.state === 'failed' || outcome.state === 'error') failed++;
         else if (outcome.state === 'aborted') aborted++;
+
+        if (judgePool && (outcome.state === 'passed' || outcome.state === 'failed' || outcome.state === 'error')) {
+          judgePool.enqueue({
+            sessionId: s.sessionId,
+            key: sessionKey(s),
+            context: {
+              jsonlPath: log.path,
+              gitDiff: outcome.gitDiff ?? { files_changed: 0, insertions: 0, deletions: 0, paths: [], is_git: false },
+              orKey: judgeKey,
+              verifyExitCode: outcome.verifyExitCode,
+              testFile: s.task.file,
+              taskId: s.task.id,
+            },
+          });
+        }
       }
     };
 
     const workers = Array.from({ length: Math.min(parallelism, sessions.length) }, () => worker());
     await Promise.all(workers);
+
+    if (judgePool) await judgePool.drain();
 
     const finishedAt = new Date().toISOString();
     const status: SessionStatus = this.aborted ? 'aborted' : 'complete';
@@ -190,7 +218,7 @@ export class RunEngine {
     log: TrafficLog,
     deps: Awaited<ReturnType<typeof ensureDepsCache>>,
     timeoutMs: number,
-  ): Promise<{ state: CellState; costUsd: number }> {
+  ): Promise<{ state: CellState; costUsd: number; verifyExitCode: number | null; gitDiff?: GitDiffSummary }> {
     const startedAt = new Date().toISOString();
     db.updateSession(s.sessionId, { status: 'running', started_at: startedAt });
 
@@ -275,7 +303,13 @@ export class RunEngine {
       await writeSessionMarkdown(spec.configDir, spec.runId, s.sessionId,
         renderSessionMd(s, sub, cost, laneServer.stepCount, cellState, laneServer.port));
 
-      return { state: cellState, costUsd: cost };
+      // Capture git diff BEFORE the finally-cleanup wipes the worktree.
+      // Best-effort — non-fatal if git isn't available or the worktree is shallow.
+      let gitDiff: GitDiffSummary | undefined;
+      try { gitDiff = await captureGitDiff(worktree.path); }
+      catch { /* leave undefined; judge falls back to zeros */ }
+
+      return { state: cellState, costUsd: cost, verifyExitCode: sub.exitCode, gitDiff };
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       const finishedAt = new Date().toISOString();
@@ -290,7 +324,7 @@ export class RunEngine {
         inputTokens: 0, outputTokens: 0,
         verifyExitCode: null, failureClass: 'setup_error',
       });
-      return { state: 'error', costUsd: 0 };
+      return { state: 'error', costUsd: 0, verifyExitCode: null };
     } finally {
       if (killer) this.activeKills.delete(killer);
       try { await laneServer?.close(); } catch { /* ignore */ }

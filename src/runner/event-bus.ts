@@ -44,6 +44,17 @@ export interface RunEvent {
   totalSessions: number;
 }
 
+export interface JudgeUpdate {
+  key: SessionKey;
+  outcome: 'success' | 'failure' | 'uncertain';
+  trajectoryScore: number;         // 0..100
+  action: number;                  // 0..25
+  grounding: number;               // 0..25
+  verification: number;            // 0..25
+  efficiency: number;              // 0..25
+  judgeOk: boolean;
+}
+
 export type EventMap = {
   'run:started':      RunEvent;
   'run:complete':     RunEvent & { totalCost: number };
@@ -53,6 +64,7 @@ export type EventMap = {
   'session:step':     StepUpdate;
   'session:complete': CellUpdate;
   'session:failed':   CellUpdate;
+  'session:judged':   JudgeUpdate;
 };
 
 type Listener<K extends keyof EventMap> = (payload: EventMap[K]) => void;

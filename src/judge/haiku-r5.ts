@@ -15,7 +15,7 @@ import {
   type JudgeStep,
 } from './trajectory.js';
 import { computeActionScore, computeEfficiencyScore, type SubScore } from './subscores.js';
-import { captureGitDiff, type GitDiffSummary } from './git-diff.js';
+import { type GitDiffSummary } from './git-diff.js';
 import type { ClassifierTagInsert, ClassifierMeta } from '../db/sqlite.js';
 
 export const JUDGE_MODEL = 'anthropic/claude-haiku-4.5';
@@ -44,7 +44,7 @@ export interface Verdict {
 
 export interface JudgeContext {
   jsonlPath: string;
-  worktreePath: string | null;
+  gitDiff: GitDiffSummary;      // captured pre-cleanup by the orchestrator
   orKey: string;
   verifyExitCode: number | null;
   testFile: string;
@@ -60,12 +60,8 @@ export async function judgeSession(sessionId: string, ctx: JudgeContext): Promis
   const traj = buildTrajectoryContext(steps);
   const action = computeActionScore(steps);
   const efficiency = computeEfficiencyScore(steps);
-  const gitDiff = ctx.worktreePath
-    ? await captureGitDiff(ctx.worktreePath)
-    : { files_changed: 0, insertions: 0, deletions: 0, paths: [], is_git: false };
-
   try {
-    const llm = await callHaiku(traj, steps, action, efficiency, gitDiff, ctx);
+    const llm = await callHaiku(traj, steps, action, efficiency, ctx.gitDiff, ctx);
     return composeVerdict(action, efficiency, llm, ctx.verifyExitCode);
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
