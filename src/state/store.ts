@@ -5,6 +5,8 @@ import type { DeterministicScan } from '../scan/deterministic.js';
 import type { MatchedFile } from '../scan/glob.js';
 import { loadOrCatalog, fetchModelEndpoints, readCachedEndpoints } from '../scan/or-catalog.js';
 import { detectOrKey, writeConfig } from './../scan/orchestrator.js';
+import { getProvider, resolveUrlTemplate, readEnv, DIRECT_PRICING } from '../proxy/providers.js';
+import { loadCatalogs, type ProviderCatalogs } from '../scan/provider-catalog.js';
 import { runMethodology, isMethodologyFresh } from '../scan/methodology.js';
 import { RunEngine, type LaneSpec, type TaskSpec, type RunSpec } from '../runner/orchestrator.js';
 import type { CellState as EngineCellState, CellUpdate, StepUpdate, SessionKey } from '../runner/event-bus.js';
@@ -97,6 +99,106 @@ type State = {
   tick: () => void;                // legacy no-op (kept so LiveProgress imports don't break)
   reset: () => void;
 };
+
+/**
+ * Extract the provider registry key from a destination slug:
+ *   openrouter:baseten/fp8  → 'openrouter'
+ *   vercel:openai/gpt-5     → 'vercel'
+ *   cloudflare              → 'cloudflare'
+ *   direct:moonshot-intl    → 'direct:moonshot-intl'
+ * Direct destinations have no provider-tag segment; the whole slug is the key.
+ */
+function providerKeyFor(destSlug: string): string {
+  if (destSlug.startsWith('direct:')) return destSlug;
+  const ix = destSlug.indexOf(':');
+  return ix < 0 ? destSlug : destSlug.slice(0, ix);
+}
+
+interface HydrateInput {
+  destSlug: string;
+  modelSlug: string;
+  catalogs: ProviderCatalogs;
+  orKey: string;
+}
+
+interface HydrateResult {
+  forwardUrl: string;
+  apiKey: string;
+  modelSlugForForward: string;
+  error?: string;
+}
+
+/**
+ * Populate the A5 multi-router LaneSpec fields for one destination:
+ *   - forwardUrl: resolved from provider registry + env (CF template)
+ *   - apiKey:     provider's primary env, process.env then ~/.c1/.env
+ *   - modelSlugForForward: reverse-lookup catalog canonical_map for direct
+ *                          providers; identity for OR / Vercel / CF Workers AI
+ * Returns an `error` string if any required config is missing so startRun
+ * can surface it via runError.
+ */
+async function hydrateMultiRouterFields(input: HydrateInput): Promise<HydrateResult> {
+  const { destSlug, modelSlug, catalogs, orKey } = input;
+  const providerKey = providerKeyFor(destSlug);
+  const provider = getProvider(providerKey);
+  if (!provider) {
+    return blank(`unknown provider "${providerKey}" for destination ${destSlug}`);
+  }
+  if (provider.status !== 'shipped') {
+    return blank(`provider ${provider.displayName} is not yet available`);
+  }
+
+  // Forward URL — routers use a template (CF has {CLOUDFLARE_ACCOUNT_ID});
+  // direct providers use a literal URL.
+  let forwardUrl: string | null;
+  if (provider.kind === 'router') {
+    // OR keeps working when the ApiKeys env isn't populated for OR by name —
+    // we already have it in `orKey`. Special-case OR to skip resolveUrlTemplate
+    // (no placeholders anyway) and read directly.
+    forwardUrl = provider.forwardUrlTemplate;
+  } else {
+    forwardUrl = provider.forwardUrl;
+  }
+  if (forwardUrl.includes('{')) {
+    forwardUrl = await resolveUrlTemplate(forwardUrl);
+  }
+  if (!forwardUrl) {
+    return blank(
+      `${provider.displayName}: missing ${provider.extraEnvs.join(' + ')} — configure on API keys screen (\`c1 --start apiKeys\`).`,
+    );
+  }
+
+  // API key — OR uses the already-detected key so we don't re-read from disk.
+  let apiKey: string | null;
+  if (providerKey === 'openrouter') {
+    apiKey = orKey;
+  } else {
+    apiKey = (await readEnv(provider.primaryEnv)).value;
+  }
+  if (!apiKey) {
+    return blank(
+      `${provider.displayName}: missing ${provider.primaryEnv} — configure on API keys screen (\`c1 --start apiKeys\`).`,
+    );
+  }
+
+  // Wire slug. For OR/Vercel/CF the canonical == the wire slug (registered
+  // in providers.ts as identity-map providers). For direct providers, look
+  // up the raw slug via the catalog's canonical_map reverse index.
+  let modelSlugForForward = modelSlug;
+  if (destSlug.startsWith('direct:')) {
+    const cat = catalogs[providerKey];
+    if (cat) {
+      const raw = Object.entries(cat.canonical_map).find(([, canon]) => canon === modelSlug)?.[0];
+      if (raw) modelSlugForForward = raw;
+    }
+  }
+
+  return { forwardUrl, apiKey, modelSlugForForward };
+}
+
+function blank(error: string): HydrateResult {
+  return { forwardUrl: '', apiKey: '', modelSlugForForward: '', error };
+}
 
 // When a model is toggled ON, auto-select a default destination:
 //   1) an AVAILABLE first-party destination if present
@@ -356,10 +458,13 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
 
-    // Build LaneSpec[] from selected models × destinations, hydrating endpoint
-    // metadata from the OR catalog so the proxy has pricing for cost math.
-    // Fallback: model-level $/M from catalog.models[i] — used when the exact
-    // endpoint lookup misses (e.g. providerTag drift between picker + catalog).
+    // Build LaneSpec[] from selected models × destinations, hydrating:
+    //   - OR catalog metadata (per-provider endpoint pricing + model-level $/M)
+    //   - A5 multi-router fields: forwardUrl, apiKey, modelSlugForForward
+    //   - DIRECT_PRICING for direct-provider fallback cost math
+    // Fail-hard on missing keys — PickDestinations should have filtered these,
+    // but if they slip through, name the ApiKeys screen in the error.
+    const providerCatalogs = await loadCatalogs();
     const laneSpecs: LaneSpec[] = [];
     for (const key of laneKeys) {
       const { model: modelSlug, dest: destSlug } = parseLane(key);
@@ -368,9 +473,26 @@ export const useStore = create<State>((set, get) => ({
       const [router, ...providerParts] = destSlug.split(':');
       const providerTag = providerParts.join(':') || null;
       const endpoint = endpoints.find((e) => e.providerTag === providerTag) ?? null;
-      const fallbackModelPrice = modelMeta
-        ? { input: modelMeta.inputPrice, output: modelMeta.outputPrice }
+
+      const hydrated = await hydrateMultiRouterFields({
+        destSlug,
+        modelSlug,
+        catalogs: providerCatalogs,
+        orKey: detected.value,
+      });
+      if (hydrated.error) {
+        set({ runError: hydrated.error });
+        return;
+      }
+
+      // Prefer DIRECT_PRICING for direct destinations; fall back to OR model
+      // pricing otherwise (or null → computeCost returns 0 → report shows `—`).
+      const directPrice = destSlug.startsWith('direct:')
+        ? (DIRECT_PRICING[destSlug]?.[modelSlug] ?? null)
         : null;
+      const fallbackModelPrice = directPrice
+        ?? (modelMeta ? { input: modelMeta.inputPrice, output: modelMeta.outputPrice } : null);
+
       laneSpecs.push({
         modelSlug,
         destinationSlug: destSlug,
@@ -378,6 +500,9 @@ export const useStore = create<State>((set, get) => ({
         providerTag,
         endpoint,
         fallbackModelPrice,
+        forwardUrl: hydrated.forwardUrl,
+        apiKey: hydrated.apiKey,
+        modelSlugForForward: hydrated.modelSlugForForward,
       });
     }
 
