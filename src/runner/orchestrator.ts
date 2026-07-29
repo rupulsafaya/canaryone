@@ -14,7 +14,7 @@ import { detectOrKey, ensureGitignore } from '../scan/orchestrator.js';
 import { Db, DB_FILE_NAME, type SessionStatus } from '../db/sqlite.js';
 import { openTrafficLog, writeRunMeta, writeSessionMarkdown, type TrafficLog, type RunMeta } from './traffic-log.js';
 import { createWorktree, ensureDepsCache, symlinkNodeModules, gcOldWorktrees } from './worktree.js';
-import { startLane } from '../proxy/lane.js';
+import { startLane, OR_CHAT_COMPLETIONS_URL } from '../proxy/lane.js';
 import { runSession, taskFileInWorktree } from './subprocess.js';
 import { RunEventBus, type SessionKey, type CellUpdate, type CellState } from './event-bus.js';
 import { JudgeWorkerPool } from '../judge/worker.js';
@@ -33,6 +33,19 @@ export interface LaneSpec {
   providerTag: string | null;
   endpoint: OrEndpoint | null;
   fallbackModelPrice: { input: number; output: number } | null;
+  // A5 additions — populated by store.startRun (A6). Optional here so
+  // pre-A6 callers still typecheck; the orchestrator falls back to OR
+  // defaults when a field is absent.
+  /** Chat-completions URL for this lane. Defaults to OR when unset. */
+  forwardUrl?: string;
+  /** Bearer token for this lane's provider. Defaults to spec.orKey when unset. */
+  apiKey?: string;
+  /**
+   * Provider-native model slug to put on the wire — may differ from
+   * `modelSlug` (which stays canonical for DB / reporting). Defaults to
+   * `modelSlug` when unset.
+   */
+  modelSlugForForward?: string;
 }
 
 export interface TaskSpec {
@@ -297,11 +310,17 @@ export class RunEngine {
       laneServer = await startLane(
         {
           runId: spec.runId, sessionId: s.sessionId,
-          modelSlug: s.lane.modelSlug, destinationSlug: s.lane.destinationSlug,
+          modelSlug: s.lane.modelSlug,
+          modelSlugForForward: s.lane.modelSlugForForward ?? s.lane.modelSlug,
+          destinationSlug: s.lane.destinationSlug,
           router: s.lane.router, providerTag: s.lane.providerTag,
           endpoint: s.lane.endpoint,
           fallbackModelPrice: s.lane.fallbackModelPrice,
-          orKey: spec.orKey,
+          // Pre-A6 lanes (built by store.startRun without multi-router
+          // awareness) leave these fields unset; fall back to OR so
+          // existing single-router runs keep working unchanged.
+          forwardUrl: s.lane.forwardUrl ?? OR_CHAT_COMPLETIONS_URL,
+          apiKey: s.lane.apiKey ?? spec.orKey,
           onStep: (delta) => {
             this.bus.emit('session:step', {
               key: sessionKey(s),

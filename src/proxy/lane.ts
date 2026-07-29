@@ -21,13 +21,18 @@ import type { OrEndpoint, CatalogModel } from '../data/schema.js';
 export interface LaneConfig {
   runId: string;
   sessionId: string;
-  modelSlug: string;                    // e.g. "openai/gpt-oss-20b"
+  modelSlug: string;                    // canonical slug — DB + reporting
+  /** Provider-native slug placed on the wire in body.model. Often equals modelSlug. */
+  modelSlugForForward: string;
   destinationSlug: string;              // e.g. "openrouter:baseten/fp8"
-  router: string;                       // e.g. "openrouter"
-  providerTag: string | null;           // e.g. "baseten/fp8" (may be null for router-only routing)
+  router: string;                       // e.g. "openrouter" | "vercel" | "cloudflare" | "direct"
+  providerTag: string | null;           // OR provider tag (e.g. "baseten/fp8"); null for non-OR routers
   endpoint: OrEndpoint | null;          // preferred pricing source (per-provider)
   fallbackModelPrice: { input: number; output: number } | null;  // model-level $/M from OR catalog; used when endpoint is null
-  orKey: string;
+  /** Chat-completions URL to POST to. Was hard-coded to OR pre-A5. */
+  forwardUrl: string;
+  /** Bearer token for the provider. Was hard-coded to spec.orKey pre-A5. */
+  apiKey: string;
   /**
    * Called after each successful chat/completions response with per-request
    * deltas. Used by the orchestrator to emit session:step so LiveProgress
@@ -46,7 +51,7 @@ export interface LaneServer {
   close(): Promise<void>;
 }
 
-const OR_URL = 'https://openrouter.ai/api/v1/chat/completions';
+export const OR_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 export async function startLane(cfg: LaneConfig, log: TrafficLog, db: Db): Promise<LaneServer> {
   let stepIx = 0;
@@ -163,13 +168,15 @@ async function handleChatCompletions(
     return;
   }
 
-  // Rewrite: model + provider.order.
+  // Rewrite: model (per-provider wire slug) + provider.order (OR only).
   const rewritten: Record<string, unknown> = {
     ...inbound,
-    model: cfg.modelSlug,
+    model: cfg.modelSlugForForward,
     stream: false,   // M1 forces non-streaming; streaming lands in D4.
   };
-  if (cfg.providerTag) {
+  // provider.order is OpenRouter routing metadata — direct/vercel/cloudflare
+  // don't accept it and would 400. Only add for the OR router.
+  if (cfg.router === 'openrouter' && cfg.providerTag) {
     rewritten.provider = { order: [cfg.providerTag] };
   }
 
@@ -187,14 +194,14 @@ async function handleChatCompletions(
     body: inbound,
   });
 
-  // Forward to OR.
+  // Forward to the lane's configured router / direct-provider.
   let orResp: Response;
   let orBodyText: string;
   try {
-    orResp = await fetch(OR_URL, {
+    orResp = await fetch(cfg.forwardUrl, {
       method: 'POST',
       headers: {
-        'authorization': `Bearer ${cfg.orKey}`,
+        'authorization': `Bearer ${cfg.apiKey}`,
         'content-type': 'application/json',
         'x-title': 'canaryone',
       },
