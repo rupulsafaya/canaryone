@@ -113,7 +113,7 @@ function defaultDestinationFor(modelSlug: string): Set<string> {
 }
 
 export const useStore = create<State>((set, get) => ({
-  screen: 'keySetup',
+  screen: 'apiKeys',
   cwd: process.cwd(),
   targetDir: process.cwd(),
   configDir: process.cwd() + '/.c1',
