@@ -122,6 +122,38 @@ async function main() {
   if (sessCount !== 1) throw new Error(`expected 1 session row, got ${sessCount}`);
   if (stepCount < 1) throw new Error(`expected >= 1 step row, got ${stepCount}`);
 
+  // ---------- judge assertions (Part B) ----------
+  const db2 = new DatabaseSync(dbPath);
+  const sessionRow = db2.prepare('SELECT id FROM sessions WHERE run_id = ?').get(runId);
+  const sessionId = sessionRow.id;
+  const tagRows = db2.prepare(
+    'SELECT dimension, value, confidence, classifier_id, classifier_version FROM classifier_tags WHERE session_id = ?'
+  ).all(sessionId);
+  db2.close();
+  const tagsByDim = new Map(tagRows.map((r) => [r.dimension, r]));
+  console.log('[integration] judge tags:', tagRows.length, 'dimensions:', [...tagsByDim.keys()].join(','));
+
+  const requiredDimensions = [
+    'outcome', 'trajectory_score', 'action_score',
+    'grounding_score', 'verification_score', 'efficiency_score',
+  ];
+  for (const d of requiredDimensions) {
+    if (!tagsByDim.has(d)) throw new Error(`missing classifier_tag dimension: ${d}`);
+  }
+
+  const outcomeRow = tagsByDim.get('outcome');
+  if (outcomeRow.value !== 'success') {
+    throw new Error(`expected outcome=success (echo fixture always passes), got ${outcomeRow.value}`);
+  }
+  if (outcomeRow.classifier_version !== '2026-07-29-haiku-r5-local') {
+    throw new Error(`expected classifier_version=2026-07-29-haiku-r5-local, got ${outcomeRow.classifier_version}`);
+  }
+  const trajectoryScore = Number(tagsByDim.get('trajectory_score').value);
+  if (!Number.isInteger(trajectoryScore) || trajectoryScore < 0 || trajectoryScore > 100) {
+    throw new Error(`expected trajectory_score integer 0-100, got ${trajectoryScore}`);
+  }
+  console.log('[integration] verdict: outcome=' + outcomeRow.value + ' trajectory=' + trajectoryScore);
+
   // Session MD exists
   const sessionsDir = path.join(runDir, 'sessions');
   const sessionFiles = await fs.readdir(sessionsDir);
