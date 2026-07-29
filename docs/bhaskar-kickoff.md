@@ -5,8 +5,15 @@
 ---
 
 You're picking up SPEC 2 of canaryone — an offline HTML report generator that
-renders a canaryone run into a single self-contained HTML file. Rupul is
-building the runner in parallel; you own the report end-to-end.
+renders a canaryone run into a single self-contained HTML file.
+
+STATUS AS OF 2026-07-29: the runner (SPEC 1 Part B — judge) shipped on main
+at commit 81f4c8b. Every `pnpm test:runner` invocation now writes 8
+classifier_tags rows per session (outcome + trajectory_score + 4 sub-scores +
+2 reasoning strings). Part A (multi-router) is still pending but doesn't
+change your data contract — sessions just have `router='openrouter'` for now.
+
+You own the report end-to-end. Rupul owns everything else.
 
 Read the spec IN FULL before writing code:
   https://github.com/rupulsafaya/canaryone/blob/main/c1-report-29july-SPEC.md
@@ -57,6 +64,9 @@ KNOWN INSTALL HAZARDS — hit these once and forget:
 Verify install:
   npx tsc --noEmit       # should exit 0
   pnpm test:tui          # 13 pty scenarios, ~1 min. Should all pass.
+  pnpm test:judge        # judge trajectory + subscores unit tests. Fast.
+  pnpm test:runner       # integration test (real OR call). ~$0.00002. Should
+                         # print outcome=success + trajectory=50 near the end.
 
 ────────────────────────────────────────────────────────────────────────────
 STEP 2 — GENERATE REAL RUN DATA TO BUILD AGAINST
@@ -70,12 +80,20 @@ OPTION A (fastest — headless integration test):
 
   This writes to a fresh /tmp/c1-runner-<random>/ dir and prints the path at
   the end. Inside you'll find:
-    .c1/db.sqlite
-    .c1/runs/<runId>/traffic.jsonl
-    .c1/runs/<runId>/meta.json
+    .c1/db.sqlite                          — sessions, steps, classifier_tags
+    .c1/runs/<runId>/traffic.jsonl         — request + response bodies
+    .c1/runs/<runId>/meta.json             — run config snapshot
     .c1/runs/<runId>/sessions/<sessionId>.md
 
-  Cost: ~$0.001. Takes ~5 seconds.
+  As of 2026-07-29 (main), this fixture-run also writes 8 judge tags per
+  session (outcome, trajectory_score, action/grounding/verification/
+  efficiency_score, judge_reasoning, trajectory_reasoning). The echo fixture
+  is single-turn so grounding + verification = 0 and trajectory_score = 50.
+  That's fine — enough data to exercise your renderer's judge-column code
+  paths. For a richer fixture with real multi-turn agent traffic, use
+  OPTION B.
+
+  Cost: ~$0.00002. Takes ~5 seconds.
 
   COPY that entire /tmp/c1-runner-<random>/.c1 dir into
   tests/fixtures/canned-run-1/.c1 so you have a stable reference:
@@ -111,13 +129,36 @@ Before you write any renderer code, read these files end-to-end:
 
 Poke at your canned run with the SQLite CLI:
 
-  sqlite3 tests/fixtures/canned-run-1/.c1/db.sqlite '.tables'
-  sqlite3 tests/fixtures/canned-run-1/.c1/db.sqlite 'SELECT * FROM sessions LIMIT 3;'
-  sqlite3 tests/fixtures/canned-run-1/.c1/db.sqlite 'SELECT * FROM classifier_tags LIMIT 5;'
+  DB=tests/fixtures/canned-run-1/.c1/db.sqlite
+
+  # High-level table layout
+  sqlite3 "$DB" '.tables'
+  sqlite3 "$DB" '.schema classifier_tags'
+  sqlite3 -column -header "$DB" 'SELECT * FROM sessions LIMIT 3;'
+
+  # See the 8 judge dimensions written per session:
+  sqlite3 -column -header "$DB" "SELECT dimension, value, confidence FROM classifier_tags LIMIT 20;"
+
+  # Pivot to one-row-per-session (mirror what the lane table needs):
+  sqlite3 -column -header "$DB" "
+    SELECT substr(s.id,1,8) sess, s.destination_slug,
+           MAX(CASE WHEN ct.dimension='outcome' THEN ct.value END) outcome,
+           MAX(CASE WHEN ct.dimension='trajectory_score' THEN ct.value END) traj,
+           MAX(CASE WHEN ct.dimension='action_score' THEN ct.value END) act,
+           MAX(CASE WHEN ct.dimension='grounding_score' THEN ct.value END) grnd,
+           MAX(CASE WHEN ct.dimension='verification_score' THEN ct.value END) vfy,
+           MAX(CASE WHEN ct.dimension='efficiency_score' THEN ct.value END) eff
+    FROM sessions s LEFT JOIN classifier_tags ct ON ct.session_id = s.id
+    GROUP BY s.id;
+  "
 
 And the JSONL:
 
   head -3 tests/fixtures/canned-run-1/.c1/runs/*/traffic.jsonl | python3 -m json.tool
+
+Also read src/runner/print-summary.ts end-to-end — it already implements
+the roll-up + Best value / Cheapest raw computation you'll need to translate
+into HTML. Do NOT re-derive from scratch.
 
 At this point you know EXACTLY what data flows into your report. Do not
 speculate about shapes — read the tables.
@@ -159,21 +200,34 @@ yourself — Rupul handles it.
 STEP 5 — GRACEFUL DEGRADATION IS REQUIRED
 ────────────────────────────────────────────────────────────────────────────
 
-The runner (SPEC 1) ships in parallel with your work. Some canned runs will
-NOT have judge tags yet — the classifier_tags table will be empty or missing
-the trajectory_score / outcome / grounding etc. rows.
+SPEC 1 Part B (judge) already shipped on main 2026-07-29 — every fresh
+run has judge tags. But two cases still hit the graceful-degradation path:
 
-Your report MUST render cleanly against runs without judge data. Behavior:
+  1. Runs generated BEFORE the schema-v2 migration (older .c1/db.sqlite
+     without classifier_id / classifier_version columns, and no judge tags).
+  2. Runs where the judge worker failed for every session (network dead,
+     OR_JUDGE_KEY unset) — sessions have status=complete but
+     classifier_tags has zero rows for their session_ids, OR
+     fallbackVerdict wrote outcome + action + efficiency but zero for
+     grounding/verification/trajectory_score.
 
-  - Trajectory-related columns simply hide when no tags exist for the run
+Your report MUST render cleanly in both cases. Behavior:
+
+  - Trajectory-related columns simply hide when no traj tags exist for the run
   - Weighted $/pass column hides too (needs traj score to compute)
   - Report still renders header + heatmap (colored by raw $/pass) + lane
     table + session drilldown + a simplified aggregate card
 
+For the traj⚠ tooltip copy: read c1-report-29july-SPEC.md §4.5. The ⚠ badge
+means one of two different things depending on workload shape — the copy
+must NOT hardcode "narrated" for tests that never emit tool_calls. See the
+spec for the heuristic.
+
 Test this against BOTH:
-  - canned-run-1 from pnpm test:runner (no judge tags — that's D3 territory)
-  - and if you can get one, a later canned run WITH judge tags (once
-    Rupul lands SPEC 1)
+  - canned-run-1 from `pnpm test:runner` — WILL have judge tags (single-turn
+    fixture, trajectory_score = 50, grounding + verification = 0)
+  - canned-run-2 from a walk-the-TUI multi-turn agent run — will have richer
+    trajectory scores (grounding + verification > 0)
 
 ────────────────────────────────────────────────────────────────────────────
 STEP 6 — COMMIT + PR
@@ -181,9 +235,10 @@ STEP 6 — COMMIT + PR
 
 You're on branch bhaskar/html-report. When your PR is ready:
 
-  tsc clean
+  npx tsc --noEmit       # should exit 0
   pnpm test:tui          # regression — should still be 13/13
-  pnpm test:runner       # regression — should still pass
+  pnpm test:judge        # regression — trajectory + subscores unit tests
+  pnpm test:runner       # regression — outcome=success + 8 judge tags
   tests/report.test.mjs  # your new test — should pass
 
 Commit with a descriptive message. Push to origin. Open PR against main.

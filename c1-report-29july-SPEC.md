@@ -51,8 +51,18 @@ Schema documented in [`src/db/sqlite.ts`](./src/db/sqlite.ts). Tables + columns 
 **`tasks_meta`**
 - `task_id` (PK), `file`, `summary`, `uses_llm`
 
-**`classifier_tags`** *(SPEC 1 adds `outcome` and `trajectory_quality` dimensions per session)*
-- `event_id` (session_id in local), `classifier_id` (= `canaryone_judge_v1_local`), `classifier_version` (= `2026-07-29-haiku-r5-local`), `dimension`, `value`, `confidence`
+**`classifier_tags`** *(schema v2, shipped 2026-07-29 — one row per dimension, 8 rows per session)*
+- `id` (PK), `session_id` (FK → sessions.id), `dimension`, `value`, `confidence`, `generated_at`, `model`, `classifier_id` (= `canaryone_judge_v1_local`), `classifier_version` (= `2026-07-29-haiku-r5-local`)
+- Dimensions written per session:
+  - `outcome` — string enum `'success' | 'failure' | 'uncertain'` (mirrors `verify_exit_code`: 0 → success, non-zero → failure, null → uncertain)
+  - `trajectory_score` — integer 0-100 (composite = action + grounding + verification + efficiency)
+  - `action_score` — integer 0-25 (computed from JSONL, `confidence=1.0`)
+  - `grounding_score` — integer 0-25 (LLM-judged)
+  - `verification_score` — integer 0-25 (LLM-judged)
+  - `efficiency_score` — integer 0-25 (computed from JSONL, `confidence=1.0`)
+  - `judge_reasoning` — one-sentence string
+  - `trajectory_reasoning` — one-sentence string
+- To pivot to one-row-per-session for the lane table / heatmap, `GROUP BY session_id` with `MAX(CASE WHEN dimension='X' THEN value END)` per dimension. See `src/runner/print-summary.ts` for a working example.
 
 ### 4.2 JSONL: `<targetDir>/.c1/runs/<runId>/traffic.jsonl`
 
@@ -70,6 +80,25 @@ For the report, iterate the JSONL once and build a map: `sessionId → { request
 ### 4.3 `meta.json` (optional but useful)
 
 `<targetDir>/.c1/runs/<runId>/meta.json` — snapshot of the run config at start. Used for the report header. Same shape as `RunMeta` in `traffic-log.ts`.
+
+### 4.4 Prior art to crib from
+
+`src/runner/print-summary.ts` already implements the roll-up + best-value / cheapest-raw computation for the ASCII summary. Bhaskar's HTML lane-table + aggregate card should mirror this logic (per-lane pass rate, spend, avg trajectory, raw + weighted $/pass, ⚠ badge on traj < 50). Do NOT re-derive independently — read the file and translate.
+
+The formatters live in `src/lib/fmt.ts` (`fmtDollars`, `fmtDuration`). Import + use them so the HTML matches what the terminal prints.
+
+### 4.5 Traj⚠ interpretation nuance (important for tooltip copy)
+
+The `⚠` glyph on `trajectory_score < 50` currently means two different things depending on the workload:
+
+- **Flavor 1 (real narration):** multi-turn agent that had tool_calls available but passed the test by narrating instead of grounding. Weighted $/pass is a real "cheap-but-wrong" signal. This is what SPEC 1 §11.2 designed for.
+- **Flavor 2 (workload-shape artifact):** stateless classifier / structured-output test with zero tool_calls. `action_score=0` + `verification_score=0` are structurally forced — the test can't score high on those dimensions no matter which model runs it. Every provider scores ~47 identically. Weighted $/pass is not a quality signal in this case.
+
+For the tooltip / drilldown copy, DO NOT hardcode "narrated" as the explanation for traj < 50. Suggested pattern:
+- If `SUM(tool_calls across all steps in session) == 0` for every session in the run → surface a banner: *"This workload didn't invoke tool_calls. Trajectory scores reflect workload shape, not model quality — compare on raw $/pass and latency instead."*
+- Otherwise render the standard "narrated" warning per the SPEC.
+
+The count of tool_calls per session can be derived from `steps` via the JSONL byte-range (see [`src/judge/subscores.ts`](./src/judge/subscores.ts) `computeEfficiencyScore` for how). For a first cut, `session.step_count > 1 && grounding_score < 15 && verification_score < 15` is a good heuristic for Flavor 1.
 
 ---
 
@@ -188,7 +217,9 @@ Sortable columns:
    Duration           1240 ms
    Steps              1
    Cost               $0.0000021
-   Judge outcome      success (0.92)   ← mirrors test exit code
+   Judge outcome      success (0.92)   ← always mirrors verify_exit_code
+                                        (0→success, non-zero→failure, null→uncertain)
+                                        Enum: 'success' | 'failure' | 'uncertain'
    Judge reasoning    Model returned "pong" as requested; test asserted non-empty…
    
    Trajectory         85/100  (confidence 0.86)
@@ -327,7 +358,10 @@ export function loadRun(runId: string, dbPath: string) {
     (stepsBySession.get(s.session_id) ?? stepsBySession.set(s.session_id, []).get(s.session_id)).push(s);
   }
   const tags = db.prepare(`
-    SELECT c.* FROM classifier_tags c JOIN sessions ss ON c.event_id = ss.id WHERE ss.run_id = ?
+    SELECT c.session_id, c.dimension, c.value, c.confidence, c.classifier_id, c.classifier_version
+    FROM classifier_tags c
+    JOIN sessions ss ON c.session_id = ss.id
+    WHERE ss.run_id = ?
   `).all(runId);
   db.close();
   return { run, sessions, stepsBySession, tags };
