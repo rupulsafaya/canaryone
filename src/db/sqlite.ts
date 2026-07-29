@@ -7,10 +7,11 @@
 // volume canaryone produces.
 
 import { DatabaseSync } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export type RunStatus = 'queued' | 'running' | 'complete' | 'failed' | 'aborted';
 export type SessionStatus = 'queued' | 'running' | 'complete' | 'failed' | 'aborted';
@@ -124,16 +125,31 @@ CREATE TABLE IF NOT EXISTS tasks_meta (
 );
 
 CREATE TABLE IF NOT EXISTS classifier_tags (
-  id            TEXT PRIMARY KEY,
-  session_id    TEXT NOT NULL REFERENCES sessions(id),
-  dimension     TEXT NOT NULL,
-  value         TEXT NOT NULL,
-  confidence    REAL,
-  generated_at  TEXT NOT NULL,
-  model         TEXT NOT NULL
+  id                  TEXT PRIMARY KEY,
+  session_id          TEXT NOT NULL REFERENCES sessions(id),
+  dimension           TEXT NOT NULL,
+  value               TEXT NOT NULL,
+  confidence          REAL,
+  generated_at        TEXT NOT NULL,
+  model               TEXT NOT NULL,
+  classifier_id       TEXT NOT NULL DEFAULT '',
+  classifier_version  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_classifier_tags_session_id ON classifier_tags(session_id);
+CREATE INDEX IF NOT EXISTS idx_classifier_tags_dimension ON classifier_tags(session_id, dimension);
 `;
+
+export interface ClassifierTagInsert {
+  dimension: string;
+  value: string;
+  confidence: number | null;
+}
+
+export interface ClassifierMeta {
+  model: string;              // judge LLM slug (e.g. anthropic/claude-haiku-4.5)
+  classifierId: string;       // e.g. canaryone_judge_v1_local
+  classifierVersion: string;  // e.g. 2026-07-29-haiku-r5-local
+}
 
 export class Db {
   private db: DatabaseSync;
@@ -154,6 +170,14 @@ export class Db {
     if (current === 0) {
       this.db.exec(SCHEMA_SQL);
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+      return;
+    }
+    if (current === 1) {
+      // Add classifier_id + classifier_version columns for the judge.
+      this.db.exec(`ALTER TABLE classifier_tags ADD COLUMN classifier_id TEXT NOT NULL DEFAULT '';`);
+      this.db.exec(`ALTER TABLE classifier_tags ADD COLUMN classifier_version TEXT NOT NULL DEFAULT '';`);
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_classifier_tags_dimension ON classifier_tags(session_id, dimension);`);
+      this.db.exec(`PRAGMA user_version = 2;`);
       return;
     }
     // No down-migrations yet; future upgrades add ALTER TABLE steps here.
@@ -218,6 +242,37 @@ export class Db {
       row.output_tokens, row.cost_usd, row.latency_ms, row.translation_notes,
       row.traffic_log_offset, row.traffic_log_length, row.failure_class,
     );
+  }
+
+  insertClassifierTags(sessionId: string, tags: ClassifierTagInsert[], meta: ClassifierMeta): void {
+    if (tags.length === 0) return;
+    const generatedAt = new Date().toISOString();
+    const stmt = this.db.prepare(`
+      INSERT INTO classifier_tags (
+        id, session_id, dimension, value, confidence, generated_at, model,
+        classifier_id, classifier_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    this.db.exec('BEGIN');
+    try {
+      for (const t of tags) {
+        stmt.run(
+          randomUUID(), sessionId, t.dimension, t.value, t.confidence,
+          generatedAt, meta.model, meta.classifierId, meta.classifierVersion,
+        );
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw e;
+    }
+  }
+
+  listClassifierTags(sessionId: string): Array<{ dimension: string; value: string; confidence: number | null; classifier_id: string; classifier_version: string }> {
+    const rows = this.db.prepare(
+      'SELECT dimension, value, confidence, classifier_id, classifier_version FROM classifier_tags WHERE session_id = ? ORDER BY generated_at, dimension'
+    ).all(sessionId) as unknown;
+    return rows as Array<{ dimension: string; value: string; confidence: number | null; classifier_id: string; classifier_version: string }>;
   }
 
   upsertTaskMeta(taskId: string, file: string, summary: string | null, usesLlm: boolean): void {

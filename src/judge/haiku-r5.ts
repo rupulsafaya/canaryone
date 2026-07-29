@@ -16,6 +16,7 @@ import {
 } from './trajectory.js';
 import { computeActionScore, computeEfficiencyScore, type SubScore } from './subscores.js';
 import { captureGitDiff, type GitDiffSummary } from './git-diff.js';
+import type { ClassifierTagInsert, ClassifierMeta } from '../db/sqlite.js';
 
 export const JUDGE_MODEL = 'anthropic/claude-haiku-4.5';
 export const JUDGE_MAX_TOKENS = 400;
@@ -267,6 +268,27 @@ export function parseJudgeContent(content: string): LlmVerdictParsed {
     trajectory_confidence: numOr(parsed.trajectory_confidence, 0.5),
     trajectory_reasoning: String(parsed.trajectory_reasoning ?? '').slice(0, 500),
   };
+}
+
+export const JUDGE_CLASSIFIER_META: ClassifierMeta = {
+  model: JUDGE_MODEL,
+  classifierId: CLASSIFIER_ID,
+  classifierVersion: CLASSIFIER_VERSION,
+};
+
+// Flatten a Verdict into the ClassifierTagInsert[] shape expected by
+// Db.insertClassifierTags. One row per dimension.
+export function verdictToTags(v: Verdict): ClassifierTagInsert[] {
+  return [
+    { dimension: 'outcome', value: v.outcome, confidence: v.confidence },
+    { dimension: 'trajectory_score', value: String(v.trajectory_score), confidence: v.trajectory_confidence },
+    { dimension: 'action_score', value: String(v.action), confidence: 1 },
+    { dimension: 'grounding_score', value: String(v.grounding), confidence: v.trajectory_confidence },
+    { dimension: 'verification_score', value: String(v.verification), confidence: v.trajectory_confidence },
+    { dimension: 'efficiency_score', value: String(v.efficiency), confidence: 1 },
+    { dimension: 'judge_reasoning', value: v.reasoning, confidence: v.confidence },
+    { dimension: 'trajectory_reasoning', value: v.trajectory_reasoning, confidence: v.trajectory_confidence },
+  ];
 }
 
 function numOr(v: unknown, fallback: number): number {
