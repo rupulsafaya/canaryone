@@ -53,6 +53,8 @@ export function Confirm() {
   const startRun = useStore((s) => s.startRun);
   const orCatalog = useStore((s) => s.orCatalog);
   const loadEndpointsFor = useStore((s) => s.loadEndpointsFor);
+  const pickedRouteIds = useStore((s) => s.pickedRouteIds);
+  const pickedRoutes = useStore((s) => s.pickedRoutes);
   type EditField = 'cap' | 'parallelism' | 'repeats';
   const [editing, setEditing] = useState<EditField | null>(null);
   const [draft, setDraft] = useState('');
@@ -105,21 +107,41 @@ export function Confirm() {
   });
 
   const includedTasks = tasks.filter((t) => t.included);
-  const lanes: { model: string; dest: string; router: string; inputPrice: number; outputPrice: number; providerDisplay: string }[] = [];
-  for (const model of selectedModels) {
-    const destinations = resolveDestinations(orCatalog, model, useCatalog);
-    const dests = selectedDestinations[model] ?? new Set<string>();
-    for (const destSlug of dests) {
-      const d = destinations.find((x) => x.slug === destSlug);
-      if (!d) continue;
+  const lanes: { model: string; dest: string; router: string; inputPrice: number; outputPrice: number; providerDisplay: string; family: string }[] = [];
+
+  // Route-first path (search UI). Falls through to legacy models × destinations
+  // only when the user has zero route picks (e.g. arrived via --start pickModels).
+  if (pickedRouteIds.size > 0) {
+    for (const r of pickedRoutes()) {
       lanes.push({
-        model,
-        dest: destSlug,
-        router: d.router,
-        inputPrice: d.inputPrice,
-        outputPrice: d.outputPrice,
-        providerDisplay: d.displayName,
+        model: r.wireSlug,
+        dest: r.providerSlug,
+        router: r.providerSlug.startsWith('direct:') ? 'direct' : r.providerSlug,
+        inputPrice: r.inputPrice ?? 0,
+        outputPrice: r.outputPrice ?? 0,
+        providerDisplay: r.providerDisplayName,
+        family: r.family,
       });
+    }
+  } else {
+    for (const model of selectedModels) {
+      const destinations = resolveDestinations(orCatalog, model, useCatalog);
+      const dests = selectedDestinations[model] ?? new Set<string>();
+      for (const destSlug of dests) {
+        const d = destinations.find((x) => x.slug === destSlug);
+        if (!d) continue;
+        const catalogModel = orCatalog?.models.find((x) => x.slug === model);
+        const family = catalogModel?.family ?? 'other';
+        lanes.push({
+          model,
+          dest: destSlug,
+          router: d.router,
+          inputPrice: d.inputPrice,
+          outputPrice: d.outputPrice,
+          providerDisplay: d.displayName,
+          family,
+        });
+      }
     }
   }
 
@@ -178,25 +200,30 @@ export function Confirm() {
             <Text color="gray" dimColor bold>$/M in · out</Text>
           </Box>
           {lanes.slice(0, 10).map((l) => {
+            // Prefer OR/fixture display name when available; otherwise show
+            // the wire slug (search-first routes).
             const catalogModel = orCatalog?.models.find((x) => x.slug === l.model);
             const fixtureModel = FIXTURE_ALL.find((x) => x.slug === l.model);
-            const m = catalogModel ?? fixtureModel;
-            if (!m) return null;
+            const displayModel = catalogModel?.displayName ?? fixtureModel?.displayName ?? l.model;
             return (
               <Box key={`${l.model}@${l.dest}`}>
                 <Box width={3}>
                   <Text> </Text>
-                  <Text color={familyColor(m.family)}>● </Text>
+                  <Text color={familyColor(l.family)}>● </Text>
                 </Box>
-                <Box width={26}><Text color="white">{truncate(m.displayName, 24)}</Text></Box>
+                <Box width={26}><Text color="white">{truncate(displayModel, 24)}</Text></Box>
                 <Box width={28}><Text color="magenta">{truncate(l.providerDisplay, 26)}</Text></Box>
                 <Box width={12}><Text color={routerColor(l.router)}>{l.router}</Text></Box>
-                <Text color="gray">${l.inputPrice.toFixed(2)} · ${l.outputPrice.toFixed(2)}</Text>
+                <Text color="gray">
+                  {l.inputPrice > 0 || l.outputPrice > 0
+                    ? `$${l.inputPrice.toFixed(2)} · $${l.outputPrice.toFixed(2)}`
+                    : '  —  ·   —  '}
+                </Text>
               </Box>
             );
           })}
           {lanes.length > 10 && <Box><Text color="gray" dimColor>{'  '}+ {lanes.length - 10} more lanes (view all in .c1/config.json)</Text></Box>}
-          {lanes.length === 0 && <Box><Text color="#ef4444" dimColor>{'  '}no lanes yet — press <Text color="cyan">m</Text> to pick models, then <Text color="cyan">h</Text> for destinations</Text></Box>}
+          {lanes.length === 0 && <Box><Text color="#ef4444" dimColor>{'  '}no lanes yet — press <Text color="cyan">m</Text> to open route picker</Text></Box>}
         </Box>
       </Section>
 

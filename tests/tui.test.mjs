@@ -437,8 +437,24 @@ tests.push(['N. ApiKeys: 11 rows in two groups; nav skips Bedrock (coming-soon)'
 
 // --- Scenario O: PickRoutes search-first flow (renders + filters + toggles) ---
 tests.push(['O. PickRoutes: search-first flow filters + toggle updates pick count', async () => {
-  await withScratchDir(async (scratchDir) => {
-    const t = spawnTui(['--start', 'pickRoutes', '--config-dir', scratchDir, '--target', TARGET_REAL], { clearAuth: false });
+  // Sandbox HOME so ~/.c1/picks.json doesn't leak the user's real picks
+  // into the assertion. Copy the real ~/.c1/ dir so cached catalogs +
+  // OR key are available (test avoids a fresh multi-second network fetch).
+  // Then blank picks.json so we start from zero.
+  const sandboxHome = await fs.mkdtemp(path.join(os.tmpdir(), 'c1-o-home-'));
+  const realC1 = path.join(os.homedir(), '.c1');
+  const sandboxC1 = path.join(sandboxHome, '.c1');
+  try {
+    await fs.cp(realC1, sandboxC1, { recursive: true, errorOnExist: false });
+  } catch { /* real ~/.c1 may not exist in CI */ }
+  await fs.mkdir(sandboxC1, { recursive: true });
+  await fs.writeFile(path.join(sandboxC1, 'picks.json'), JSON.stringify({ picked: [] }), { mode: 0o600 });
+  try {
+    await withScratchDir(async (scratchDir) => {
+      const t = spawnTui(
+        ['--start', 'pickRoutes', '--config-dir', scratchDir, '--target', TARGET_REAL],
+        { clearAuth: false, env: { HOME: sandboxHome } },
+      );
     try {
       await t.waitFor('Pick routes', 8000);
       await t.waitFor('Search:', 3000);
@@ -464,7 +480,10 @@ tests.push(['O. PickRoutes: search-first flow filters + toggle updates pick coun
       t.send('\x03');
       await t.waitExit(3000);
     } finally { t.kill(); }
-  });
+    });
+  } finally {
+    await fs.rm(sandboxHome, { recursive: true, force: true });
+  }
 }]);
 
 console.log('Running TUI tests via node-pty...\n');
