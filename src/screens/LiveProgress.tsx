@@ -113,6 +113,7 @@ export function LiveProgress() {
 
   const includedTasks = tasks.filter((t) => t.included);
   const laneKeys = Object.keys(cells);
+  const repeats = useStore((s) => s.repeats) || 1;
   const totalCells = laneKeys.length * includedTasks.length;
   const doneCells = laneKeys.reduce((acc, lane) => acc + includedTasks.filter((t) => {
     const st = cells[lane]?.[t.id]?.state;
@@ -160,6 +161,10 @@ export function LiveProgress() {
         const laneCells = cells[lane] ?? {};
         const passed = includedTasks.reduce((a, t) => a + (laneCells[t.id]?.passed ?? 0), 0);
         const attempted = includedTasks.reduce((a, t) => a + (laneCells[t.id]?.attempted ?? 0), 0);
+        // Show passed/expected while running so the user sees "1/3" for a lane
+        // with 2 repeats still in flight, not the misleading "1/1 pass" that
+        // reads as "done." Post-run, expected === attempted so no change.
+        const expected = includedTasks.length * repeats;
         const spend = includedTasks.reduce((a, t) => a + (laneCells[t.id]?.costUsd ?? 0), 0);
         const running = includedTasks.some((t) => laneCells[t.id]?.state === 'running');
         const queued = includedTasks.filter((t) => laneCells[t.id]?.state === 'queued').length;
@@ -186,7 +191,9 @@ export function LiveProgress() {
               );
             })}
             <Box paddingLeft={2}>
-              <Box width={COLS.pass}><Text color="white">{passed}/{attempted}</Text></Box>
+              <Box width={COLS.pass}>
+                <Text color="white">{passed}/{runFinishedAt ? attempted : expected}</Text>
+              </Box>
               <Box width={COLS.spend}><Text color="gray">{fmtDollars(spend)}</Text></Box>
               <Box width={COLS.costPer}>
                 <Text color={passed > 0 ? '#22c55e' : 'gray'}>
