@@ -299,12 +299,18 @@ function providerOrder(providerSlug: string): number {
 // Try common family/version guesses to look up DIRECT_PRICING by canonical
 // key. DIRECT_PRICING is keyed by OR-style canonical slugs; direct-provider
 // wire slugs are provider-native. This is a best-effort match for the
-// tweet-demo pairs we hand-seeded.
+// tweet-demo pairs we hand-seeded. Fast/turbo variants get their own key so
+// they don't share standard-tier pricing.
 function tryDirectPriceKey(providerSlug: string, wireSlug: string): string | null {
   if (!(providerSlug in DIRECT_PRICING)) return null;
   const s = wireSlug.toLowerCase();
-  if (s.includes('kimi') && s.includes('k3')) return 'moonshotai/kimi-k3';
-  if (s.includes('glm') && (s.includes('5.2') || s.includes('5p2'))) return 'z-ai/glm-5.2';
+  const isFast = /(-|\.)fast\b|k3p_?fast|kimi-k3-fast|glm-5p2-fast|5\.2-fast/.test(s);
+  if (s.includes('kimi') && (s.includes('k3') || s.includes('k3p') || s.includes('k3-'))) {
+    return isFast ? 'moonshotai/kimi-k3-fast' : 'moonshotai/kimi-k3';
+  }
+  if (s.includes('glm') && (s.includes('5.2') || s.includes('5p2'))) {
+    return isFast ? 'z-ai/glm-5.2-fast' : 'z-ai/glm-5.2';
+  }
   return null;
 }
 

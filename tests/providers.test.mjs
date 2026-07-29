@@ -134,9 +134,16 @@ async function main() {
   const p = providers.DIRECT_PRICING['direct:moonshot-intl']?.['moonshotai/kimi-k3'];
   assert(p?.input === 2.50 && p?.output === 12.50,
     `moonshot-intl kimi-k3 pricing wrong: ${JSON.stringify(p)}`);
-  const missPrice = providers.DIRECT_PRICING['direct:fireworks']?.['moonshotai/kimi-k3'];
+  // Missing (provider, model) pair → undefined → computeCost fail-soft.
+  // Groq's slot exists but is empty, so this is a valid "missing" probe.
+  const missPrice = providers.DIRECT_PRICING['direct:groq']?.['moonshotai/kimi-k3'];
   assert(missPrice === undefined,
     'missing (provider, model) pair returns undefined — computeCost fail-soft');
+
+  // Fireworks kimi-k3 now has a hand-seeded entry (Fireworks doesn't expose pricing via API).
+  const fireworksK3 = providers.DIRECT_PRICING['direct:fireworks']?.['moonshotai/kimi-k3'];
+  assert(fireworksK3?.input === 3.00 && fireworksK3?.output === 15.00,
+    `Fireworks kimi-k3 pricing wrong: ${JSON.stringify(fireworksK3)}`);
 
   await fs.rm(tmpHome, { recursive: true, force: true });
   console.log('providers.test.mjs — all assertions passed');

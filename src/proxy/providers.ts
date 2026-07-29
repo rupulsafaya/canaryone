@@ -238,8 +238,20 @@ export const DIRECT_PRICING: Record<string, Record<string, DirectPrice>> = {
     'moonshotai/kimi-k3': { input: 2.80, output: 14.00 },
     'z-ai/glm-5.2': { input: 3.00, output: 15.00 },
   },
-  'direct:fireworks': {},
-  'direct:together': {},
+  // Fireworks doesn't expose pricing via /models — all fields are metadata
+  // (context, tool support, params, MoE flag, etc.). We hand-seed from
+  // fireworks.ai/pricing. Verified 2026-07-30 via Vercel's endpoints call
+  // which reports the same numbers on the Fireworks endpoint under Kimi K3 Fast.
+  'direct:fireworks': {
+    'moonshotai/kimi-k3': { input: 3.00, output: 15.00 },        // standard
+    'moonshotai/kimi-k3-fast': { input: 4.50, output: 22.50 },   // fast tier
+    'z-ai/glm-5.2': { input: 1.40, output: 4.40 },               // per OR catalog Fireworks endpoint
+    'z-ai/glm-5.2-fast': { input: 2.10, output: 6.60 },
+  },
+  'direct:together': {
+    'moonshotai/kimi-k3': { input: 3.00, output: 15.00 },        // matches OR Together endpoint
+    'z-ai/glm-5.2': { input: 1.40, output: 4.40 },
+  },
   'direct:groq': {},
   'direct:deepseek': {},
   'direct:cerebras': {},
