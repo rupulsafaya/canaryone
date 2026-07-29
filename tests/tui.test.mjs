@@ -37,7 +37,9 @@ tests.push(['A. Fresh KeySetup: prompt → char-by-char → invalid → retry �
   const hadBackup = await backupHomeEnv();
   try {
     await withScratchDir(async (scratchDir) => {
-      const t = spawnTui(['--config-dir', scratchDir, '--target', TARGET_REAL]);
+      // Pinned to --start keySetup: default boot is now ApiKeys (A4.5).
+      // Full A6 rewrites A/B against ApiKeys and deletes this screen.
+      const t = spawnTui(['--start', 'keySetup', '--config-dir', scratchDir, '--target', TARGET_REAL]);
       try {
         await t.waitFor('paste your OpenRouter', 10000);
         t.send('sk-or-v1-bogus-testing-1234567890abcdef');
@@ -72,7 +74,7 @@ tests.push(['B. Saved bogus key auto-validated → invalid → retry → prompt 
     await fs.mkdir(path.dirname(HOME_ENV), { recursive: true });
     await fs.writeFile(HOME_ENV, 'OPENROUTER_API_KEY=sk-or-v1-scenario-b-bogus\n', { mode: 0o600 });
     await withScratchDir(async (scratchDir) => {
-      const t = spawnTui(['--config-dir', scratchDir, '--target', TARGET_REAL]);
+      const t = spawnTui(['--start', 'keySetup', '--config-dir', scratchDir, '--target', TARGET_REAL]);
       try {
         await t.waitFor(/looking for|calling OpenRouter|OpenRouter did not accept/, 5000);
         await t.waitFor('OpenRouter did not accept', 10000);

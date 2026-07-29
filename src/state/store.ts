@@ -475,7 +475,7 @@ export const useStore = create<State>((set, get) => ({
   },
   tick: () => { /* legacy no-op — real updates come from the RunEngine bus */ },
   reset: () => set({
-    screen: 'keySetup',
+    screen: 'apiKeys',
     onboardingStep: 0,
     cells: {},
     runStartedAt: null,
