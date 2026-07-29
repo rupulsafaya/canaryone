@@ -36,8 +36,23 @@ export type CellState = 'queued' | 'running' | 'passed' | 'failed' | 'error';
 //   latencyMs   — MAX of session latencies
 //   passed      — how many of `attempted` finished with status='complete'
 //   attempted   — how many sessions reached a terminal state (pass/fail/error)
+//   runningSince — Date.now() when the most-recent session:running fired
+//                  (undefined for cells that haven't started). Used with
+//                  liveStepCount to render "3t · 4s ⠧" on active cells.
+//   liveStepCount — increments per session:step; reset on each new
+//                   session:running. Tracks the CURRENT session, not aggregate.
+//   trajScore   — most-recent judge composite (0-100). Set by session:judged.
 // passed/attempted let LiveProgress show cost-per-pass at the lane level.
-export type Cell = { state: CellState; costUsd: number; latencyMs: number; passed: number; attempted: number };
+export type Cell = {
+  state: CellState;
+  costUsd: number;
+  latencyMs: number;
+  passed: number;
+  attempted: number;
+  runningSince?: number;
+  liveStepCount?: number;
+  trajScore?: number;
+};
 
 export type Router = 'openrouter' | 'direct' | 'bedrock' | 'vertex' | 'azure';
 

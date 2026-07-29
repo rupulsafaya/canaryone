@@ -7,7 +7,7 @@ import { loadOrCatalog, fetchModelEndpoints, readCachedEndpoints } from '../scan
 import { detectOrKey, writeConfig } from './../scan/orchestrator.js';
 import { runMethodology, isMethodologyFresh } from '../scan/methodology.js';
 import { RunEngine, type LaneSpec, type TaskSpec, type RunSpec } from '../runner/orchestrator.js';
-import type { CellState as EngineCellState, CellUpdate, StepUpdate } from '../runner/event-bus.js';
+import type { CellState as EngineCellState, CellUpdate, StepUpdate, SessionKey } from '../runner/event-bus.js';
 import { randomUUID } from 'node:crypto';
 
 export type CatalogStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -55,7 +55,14 @@ type State = {
   focusedTaskId: string | null;
   cells: Record<LaneKey, Record<string, Cell>>;           // lane -> task.id -> cell
   runStartedAt: number | null;
+  /** When run:sessionsComplete fires — all subprocesses done, judge still may be draining. */
+  sessionsCompleteAt: number | null;
+  /** When run:complete fires — everything (judge + report) fully committed. */
   runFinishedAt: number | null;
+  /** Total sessions expected in the current run (materialized up front). */
+  totalSessions: number;
+  /** How many sessions have received a judge verdict so far. */
+  judgedCount: number;
   totalSpend: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -135,7 +142,10 @@ export const useStore = create<State>((set, get) => ({
   focusedTaskId: null,
   cells: {},
   runStartedAt: null,
+  sessionsCompleteAt: null,
   runFinishedAt: null,
+  totalSessions: 0,
+  judgedCount: 0,
   totalSpend: 0,
   totalInputTokens: 0,
   totalOutputTokens: 0,
@@ -409,19 +419,22 @@ export const useStore = create<State>((set, get) => ({
     // a run instead of jumping only when a session completes. session:step
     // deltas are additive; state changes stay on the session:* events.
     engine.bus.on('session:step', (u) => applyStepUpdate(u));
-    // 'run:sessionsComplete' fires as soon as all runOne workers exit; the
-    // judge pool may still be draining in the background. Flip the visible
-    // state now so the title doesn't sit on "Running" for the judge tail.
-    // 'run:complete' still fires later (after drain); we clear the engine
-    // handle then so any late abort is a no-op.
-    engine.bus.on('run:sessionsComplete', () => {
-      set({ runFinishedAt: Date.now() });
+    // Judge verdict lands — record trajectory score on the cell + tick the
+    // 'judged' counter so LiveProgress can render "judged N/M".
+    engine.bus.on('session:judged', (u) => applyJudgedUpdate(u));
+    // Three distinct phases now, three separate state fields — the TUI
+    // wants to render each differently:
+    //   run:sessionsComplete  → all subprocesses done, judge draining
+    //   run:complete          → judge drained, report generated, everything done
+    //   run:aborted           → user hit `x`, treat as complete for exit
+    engine.bus.on('run:sessionsComplete', (u) => {
+      set({ sessionsCompleteAt: Date.now(), totalSessions: u.totalSessions });
     });
     engine.bus.on('run:complete', () => {
       set({ runFinishedAt: Date.now(), engine: null });
     });
     engine.bus.on('run:aborted', () => {
-      set({ runFinishedAt: Date.now(), engine: null });
+      set({ sessionsCompleteAt: Date.now(), runFinishedAt: Date.now(), engine: null });
     });
     engine.bus.on('report:generating', () => set({ reportGenerating: true }));
     engine.bus.on('report:generated', (u) => set({
@@ -435,7 +448,10 @@ export const useStore = create<State>((set, get) => ({
       screen: 'liveProgress',
       cells,
       runStartedAt: Date.now(),
+      sessionsCompleteAt: null,
       runFinishedAt: null,
+      totalSessions: taskSpecs.length * laneSpecs.length * s.repeats,
+      judgedCount: 0,
       totalSpend: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,
@@ -463,7 +479,10 @@ export const useStore = create<State>((set, get) => ({
     onboardingStep: 0,
     cells: {},
     runStartedAt: null,
+    sessionsCompleteAt: null,
     runFinishedAt: null,
+    totalSessions: 0,
+    judgedCount: 0,
     totalSpend: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
@@ -502,12 +521,20 @@ function applyCellUpdate(u: CellUpdate): void {
     // Cost/tokens are handled by applyStepUpdate on each request. For
     // sessions that never got a step (setup errors), u.costUsd is 0 anyway,
     // so we can safely NOT add cost/tokens here.
+    // Live-activity tracking: reset runningSince/liveStepCount when the
+    // cell newly enters the 'running' state (new session for a repeat > 1
+    // cell). On terminal state we KEEP the last values so the display can
+    // still show "took Nt · Xs" briefly after finish if we want to.
+    const enteringRunning = u.state === 'running' && prev.state !== 'running';
     laneCells[u.key.taskId] = {
       state,
       costUsd: prev.costUsd,
       latencyMs: Math.max(prev.latencyMs, u.latencyMs),
       passed:    prev.passed    + (u.state === 'passed' ? 1 : 0),
       attempted: prev.attempted + (isTerminal ? 1 : 0),
+      runningSince: enteringRunning ? Date.now() : prev.runningSince,
+      liveStepCount: enteringRunning ? 0 : prev.liveStepCount,
+      trajScore: prev.trajScore,
     };
     nextCells[u.key.laneKey] = laneCells;
     return { cells: nextCells };
@@ -523,6 +550,7 @@ function applyStepUpdate(u: StepUpdate): void {
       ...prev,
       costUsd: prev.costUsd + u.costUsd,
       latencyMs: Math.max(prev.latencyMs, u.latencyMs),
+      liveStepCount: (prev.liveStepCount ?? 0) + 1,
     };
     nextCells[u.key.laneKey] = laneCells;
     return {
@@ -531,5 +559,27 @@ function applyStepUpdate(u: StepUpdate): void {
       totalInputTokens: s.totalInputTokens + u.inputTokens,
       totalOutputTokens: s.totalOutputTokens + u.outputTokens,
     };
+  });
+}
+
+/**
+ * session:judged handler. The judge worker emits a JudgeUpdate carrying the
+ * SessionKey + trajectoryScore + sub-scores. We put the score on the cell
+ * + bump the run-level `judgedCount` so LiveProgress can show "judged N/M"
+ * during the drain phase.
+ */
+function applyJudgedUpdate(u: { key: SessionKey; trajectoryScore: number; judgeOk: boolean }): void {
+  useStore.setState((s) => {
+    const nextCells = { ...s.cells };
+    const laneCells = { ...(nextCells[u.key.laneKey] ?? {}) };
+    const prev = laneCells[u.key.taskId];
+    // Count the judge job as done regardless of whether we had a cell to attach it to.
+    if (!prev) return { judgedCount: s.judgedCount + 1 };
+    laneCells[u.key.taskId] = {
+      ...prev,
+      trajScore: u.judgeOk ? u.trajectoryScore : prev.trajScore,
+    };
+    nextCells[u.key.laneKey] = laneCells;
+    return { cells: nextCells, judgedCount: s.judgedCount + 1 };
   });
 }

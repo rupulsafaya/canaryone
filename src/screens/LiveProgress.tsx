@@ -57,7 +57,8 @@ const COLS = {
   pass:     8,
   spend:    11,
   costPer:  11,
-  eta:      8,
+  // Widened to fit "12t·34s ⠧" (activity string) — was 8, now 10.
+  eta:      10,
 };
 const TOTAL_WIDTH = (nTasks: number) =>
   COLS.model + COLS.dest + COLS.router + nTasks * COLS.taskCell +
@@ -69,10 +70,16 @@ function familyFromSlug(slug: string): string {
   return known.includes(prefix) ? prefix : 'other';
 }
 
+// Braille spinner frames — cycles every 100ms while any activity is in flight
+// (sessions running OR judge draining OR report generating). Cheap eye-anchor
+// so the user never sees a still screen and assumes it's stuck.
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
 export function LiveProgress() {
   const tasks = useStore((s) => s.tasks);
   const cells = useStore((s) => s.cells);
   const runStartedAt = useStore((s) => s.runStartedAt);
+  const sessionsCompleteAt = useStore((s) => s.sessionsCompleteAt);
   const runFinishedAt = useStore((s) => s.runFinishedAt);
   const totalSpend = useStore((s) => s.totalSpend);
   const reportPath = useStore((s) => s.reportPath);
@@ -83,6 +90,8 @@ export function LiveProgress() {
   const orCatalog = useStore((s) => s.orCatalog);
   const configDir = useStore((s) => s.configDir);
   const runId = useStore((s) => s.runId);
+  const totalSessions = useStore((s) => s.totalSessions);
+  const judgedCount = useStore((s) => s.judgedCount);
   const totalInputTokens = useStore((s) => s.totalInputTokens);
   const totalOutputTokens = useStore((s) => s.totalOutputTokens);
   const reportHtmlPath = useStore((s) => s.reportHtmlPath);
@@ -91,14 +100,17 @@ export function LiveProgress() {
 
   const runDir = runId ? path.join(configDir, 'runs', runId) : null;
 
-  // Force a re-render every second so elapsed/eta refresh even while the bus
-  // is idle between session transitions.
-  const [, setNow] = useState(0);
+  // Two ticks: a fast one (100ms) drives the spinner + activity strings during
+  // any active phase; a slow one (1s) is enough to refresh elapsed/eta once
+  // everything is done and just showing final state.
+  const [spinnerIdx, setSpinnerIdx] = useState(0);
+  const activePhase = !runFinishedAt;
   useEffect(() => {
-    if (runFinishedAt) return;
-    const t = setInterval(() => setNow((n) => n + 1), 1000);
+    if (!activePhase) return;
+    const t = setInterval(() => setSpinnerIdx((i) => (i + 1) % SPINNER_FRAMES.length), 100);
     return () => clearInterval(t);
-  }, [runFinishedAt]);
+  }, [activePhase]);
+  const spinner = SPINNER_FRAMES[spinnerIdx];
 
   useInput((input, key) => {
     if (!runFinishedAt) {
@@ -136,11 +148,44 @@ export function LiveProgress() {
   const elapsedSec = runStartedAt ? (Date.now() - runStartedAt) / 1000 : 0;
   const etaSec = doneCells > 0 && !runFinishedAt ? (elapsedSec / doneCells) * (totalCells - doneCells) : 0;
 
+  // Phase = what's actually happening RIGHT NOW.
+  //   'pre'      → sessions running (title=Running yellow)
+  //   'judging'  → all sessions done, judge draining (title=Judging amber)
+  //   'report'   → judge done, HTML report generating (title=Rendering blue)
+  //   'done'     → everything done (title=Run complete green)
+  const phase: 'pre' | 'judging' | 'report' | 'done' =
+    runFinishedAt ? 'done'
+      : reportGenerating ? 'report'
+        : sessionsCompleteAt ? 'judging'
+          : 'pre';
+
+  const title =
+    phase === 'done'    ? 'Run complete'
+      : phase === 'report'  ? `Rendering report ${spinner}`
+        : phase === 'judging' ? `Wrapping up · judging ${spinner}`
+          : `Running ${spinner}`;
+  const accent =
+    phase === 'done'    ? '#22c55e'
+      : phase === 'report'  ? '#3b82f6'
+        : phase === 'judging' ? '#eab308'
+          : SCREEN_ACCENT.liveProgress;
+
+  const subtitle = (() => {
+    const base = `${doneCells}/${totalCells} · ${fmtDollars(totalSpend)} · ${totalInputTokens}/${totalOutputTokens} tok · elapsed ${fmtDuration(elapsedSec)}`;
+    if (phase === 'pre' && etaSec) return `${base} · eta ${fmtDuration(etaSec)}`;
+    if (phase === 'judging') {
+      const remaining = Math.max(0, totalSessions - judgedCount);
+      return `${base} · judged ${judgedCount}/${totalSessions}${remaining ? ` · ${remaining} in flight` : ''}`;
+    }
+    if (phase === 'report') return `${base} · generating HTML report`;
+    return base;
+  })();
+
   return (
     <Frame
-      title={runFinishedAt ? 'Run complete' : 'Running'}
-      accent={runFinishedAt ? '#22c55e' : SCREEN_ACCENT.liveProgress}
-      subtitle={`${doneCells}/${totalCells} · ${fmtDollars(totalSpend)} · ${totalInputTokens}/${totalOutputTokens} tok · elapsed ${fmtDuration(elapsedSec)}${!runFinishedAt && etaSec ? ` · eta ${fmtDuration(etaSec)}` : ''}`}
+      title={title}
+      accent={accent}
+      subtitle={subtitle}
       footer={
         runFinishedAt ? (
           <Text color="gray">
@@ -189,6 +234,20 @@ export function LiveProgress() {
         const running = includedTasks.some((t) => laneCells[t.id]?.state === 'running');
         const queued = includedTasks.filter((t) => laneCells[t.id]?.state === 'queued').length;
         const etaLane = running ? P50_RUN_SECONDS * (queued + 1) : queued * P50_RUN_SECONDS;
+        // Live-activity string for the eta column: when a session on this
+        // lane is currently running, show "Nt·Xs ⠧" (turn count + elapsed
+        // + spinner) instead of eta. Zero-guessing feedback that the lane
+        // isn't stuck — visible from any scroll position.
+        const runningCell = includedTasks
+          .map((t) => laneCells[t.id])
+          .find((c) => c?.state === 'running');
+        const activityString: string | null = runningCell?.runningSince
+          ? (() => {
+              const secs = Math.max(0, (Date.now() - runningCell.runningSince) / 1000);
+              const turns = runningCell.liveStepCount ?? 0;
+              return `${turns}t·${Math.round(secs)}s ${spinner}`;
+            })()
+          : null;
         return (
           <Box key={lane} flexShrink={0}>
             <Box width={COLS.model}>
@@ -220,7 +279,11 @@ export function LiveProgress() {
                   {passed > 0 ? fmtDollars(spend / passed) : '—'}
                 </Text>
               </Box>
-              <Box width={COLS.eta}><Text color="gray">{etaLane > 0 && !runFinishedAt ? `~${fmtDuration(etaLane)}` : ''}</Text></Box>
+              <Box width={COLS.eta}>
+                {activityString
+                  ? <Text color="#eab308" bold>{activityString}</Text>
+                  : <Text color="gray">{etaLane > 0 && !runFinishedAt ? `~${fmtDuration(etaLane)}` : ''}</Text>}
+              </Box>
             </Box>
           </Box>
         );
