@@ -134,7 +134,7 @@ function renderSessionBody(
     ${taskSummaryBlock}
     <dl class="session-body-grid">
       <dt>Session id</dt><dd><code>${escapeHtml(s.id)}</code></dd>
-      <dt>Model / Rtr</dt><dd>${modelRouter}</dd>
+      <dt>Model / Router</dt><dd>${modelRouter}</dd>
       <dt>Verify exit</dt><dd><code>${s.verify_exit_code == null ? 'null' : escapeHtml(String(s.verify_exit_code))}</code>${s.failure_class ? ` <span class="muted">(${escapeHtml(s.failure_class)})</span>` : ''}</dd>
       <dt>Steps</dt><dd>${stepCount}</dd>
       <dt>Cost</dt><dd>${escapeHtml(fmtDollars(s.cost_usd ?? 0))}</dd>

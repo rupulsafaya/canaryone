@@ -35,7 +35,7 @@ export function renderLaneTable(data: RunData): string {
       <dl>
         <dt>Lane</dt><dd>Destination slug: <code>&lt;router&gt;:&lt;provider&gt;</code>. Same weights served through different routers = different lanes.</dd>
         <dt>Model</dt><dd>The model being tested. Constant across lanes for single-model runs.</dd>
-        <dt>Rtr</dt><dd>Router (colored badge): OpenRouter / direct / Vercel / Cloudflare.</dd>
+        <dt>Router</dt><dd>Colored router badge: OpenRouter / Vercel / Bedrock / direct.</dd>
         <dt>Pass</dt><dd><code>passed / attempted</code> for this lane.</dd>
         <dt>\$/pass</dt><dd>Raw cost per pass: <code>total spend / passed count</code>. Ignores trajectory quality.</dd>
         <dt>Judge</dt><dd>Average judge score (0-100) across this lane's sessions — composite of action + grounding + verification + efficiency, computed by the judge LLM after each session. <code>⚠</code> on scores &lt; 50 (usually means "test passed but the model didn't really do the work"; see §4.5 of the SPEC for the caveat around workloads that don't exercise tool_calls).</dd>
@@ -51,7 +51,7 @@ export function renderLaneTable(data: RunData): string {
         <tr>
           <th class="sortable" data-sort-key="lane">Lane</th>
           <th class="sortable" data-sort-key="model">Model</th>
-          <th class="sortable" data-sort-key="router">Rtr</th>
+          <th class="sortable" data-sort-key="router">Router</th>
           <th class="sortable" data-sort-key="pass" style="text-align: right;">Pass</th>
           <th class="sortable sort-desc" data-sort-key="cost_per_pass" style="text-align: right;">\$/pass</th>
           <th class="sortable" data-sort-key="traj" style="text-align: right;">Judge</th>

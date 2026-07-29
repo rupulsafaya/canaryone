@@ -206,8 +206,8 @@ export function LiveProgress() {
       {/* Header row */}
       <Box flexShrink={0}>
         <Box width={COLS.model}><Text color="magenta" bold>Model</Text></Box>
-        <Box width={COLS.dest}><Text color="magenta" bold>Destination</Text></Box>
-        <Box width={COLS.router}><Text color="magenta" bold>Rtr</Text></Box>
+        <Box width={COLS.dest}><Text color="magenta" bold>Provider</Text></Box>
+        <Box width={COLS.router}><Text color="magenta" bold>Router</Text></Box>
         {includedTasks.map((t) => (
           <Box key={t.id} width={COLS.taskCell}><Text color="gray" bold>{t.id}</Text></Box>
         ))}
