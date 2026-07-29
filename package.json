@@ -12,7 +12,8 @@
     "start": "node dist/cli.js",
     "test:tui": "node tests/tui.test.mjs",
     "test:runner": "tsx tests/runner.test.mjs",
-    "test:judge": "tsx tests/judge-trajectory.test.mjs"
+    "test:judge": "tsx tests/judge-trajectory.test.mjs",
+    "test:providers": "tsx tests/providers.test.mjs"
   },
   "engines": {
     "node": ">=22"
