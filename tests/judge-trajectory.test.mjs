@@ -46,7 +46,39 @@ async function main() {
   if (ctx.finalResponse !== 'Edit landed. Done.') throw new Error(`finalResponse got: ${ctx.finalResponse}`);
   if (ctx.lastFinishReason !== 'stop') throw new Error(`lastFinishReason got: ${ctx.lastFinishReason}`);
 
-  console.log('[judge-trajectory] PASS · file-re-read collapse + prompt extraction green');
+  // ---------- subscores ----------
+  const sub = await import(pathToFileURL(path.join(canaryoneDir, 'src/judge/subscores.ts')).href);
+
+  // Single-turn: score 25 by default.
+  const single = sub.computeActionScore([steps[0]]);
+  if (single.score !== 25) throw new Error(`single-turn action expected 25, got ${single.score}`);
+
+  // 3 turns, tool_result appears in step 2 + step 3 → 2/3 turns have a tool_call.
+  // Also step1 has finish_reason='tool_calls' — that also counts. So 2 turns qualify:
+  //   step0: finish=tool_calls OR next has tool → yes
+  //   step1: finish=tool_calls OR next has tool → yes
+  //   step2: finish=stop, no next → no
+  // withTool=2, total=3, score = floor(25*2/3) = 16
+  const action = sub.computeActionScore(steps);
+  if (action.score !== 16) throw new Error(`3-turn action expected 16, got ${action.score}`);
+
+  // No tool_calls in the response bodies of the fixture → efficiency default 25.
+  const eff = sub.computeEfficiencyScore(steps);
+  if (eff.score !== 25) throw new Error(`no-tool-calls efficiency expected 25, got ${eff.score}`);
+
+  // Duplicate signature test:
+  const dupSteps = [
+    { step_ix: 0, request_messages: [], response_text: '', finish_reason: 'tool_calls', tool_calls: [
+      { function: { name: 'read', arguments: '{"path":"foo.txt"}' } },
+      { function: { name: 'read', arguments: '{"path":"foo.txt"}' } },   // dup
+      { function: { name: 'read', arguments: '{"path":"bar.txt"}' } },
+    ] },
+  ];
+  const dup = sub.computeEfficiencyScore(dupSteps);
+  // 2 unique of 3 → floor(25*2/3) = 16
+  if (dup.score !== 16) throw new Error(`dup-tool-call efficiency expected 16, got ${dup.score}`);
+
+  console.log('[judge-trajectory] PASS · trajectory + subscores green');
 }
 
 main().catch((e) => {
