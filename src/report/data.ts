@@ -374,6 +374,110 @@ export async function profileTrafficBodies(jsonlPath: string, kind: 'request' | 
   return profileJsonRecords(bodies);
 }
 
+// ---------- lane rollup (shared by leaderboard/lane-table/heatmap/aggregate) ----------
+
+export interface LaneRollup {
+  laneKey: string;                    // destination_slug
+  modelSlug: string;
+  destSlug: string;
+  router: string;
+  attempted: number;
+  passed: number;
+  spend: number;
+  perTask: Map<string, { attempted: number; passed: number; spend: number; latencies: number[] }>;
+  latenciesMs: number[];              // all step latencies across the lane
+  trajSum: number;
+  trajCount: number;
+  avgTraj: number | null;
+  dollarsPerPass: number | null;
+  weightedDollarsPerPass: number | null;
+  p50LatencyMs: number | null;
+  p95LatencyMs: number | null;
+}
+
+export function computeLaneRollups(data: RunData): LaneRollup[] {
+  const bySlug = new Map<string, LaneRollup>();
+  for (const s of data.sessions) {
+    const key = s.destination_slug;
+    let r = bySlug.get(key);
+    if (!r) {
+      r = {
+        laneKey: key,
+        modelSlug: s.model_slug,
+        destSlug: s.destination_slug,
+        router: s.router,
+        attempted: 0, passed: 0, spend: 0,
+        perTask: new Map(),
+        latenciesMs: [],
+        trajSum: 0, trajCount: 0, avgTraj: null,
+        dollarsPerPass: null, weightedDollarsPerPass: null,
+        p50LatencyMs: null, p95LatencyMs: null,
+      };
+      bySlug.set(key, r);
+    }
+    r.attempted++;
+    if (s.status === 'complete') r.passed++;
+    r.spend += s.cost_usd ?? 0;
+    const t = r.perTask.get(s.task_id) ?? { attempted: 0, passed: 0, spend: 0, latencies: [] };
+    t.attempted++;
+    if (s.status === 'complete') t.passed++;
+    t.spend += s.cost_usd ?? 0;
+    const steps = data.stepsBySession.get(s.id) ?? [];
+    for (const step of steps) {
+      if (step.latency_ms != null) {
+        r.latenciesMs.push(step.latency_ms);
+        t.latencies.push(step.latency_ms);
+      }
+    }
+    r.perTask.set(s.task_id, t);
+    const v = data.verdictBySession.get(s.id);
+    if (v?.trajectory_score != null) {
+      r.trajSum += v.trajectory_score;
+      r.trajCount++;
+    }
+  }
+  for (const r of bySlug.values()) {
+    if (r.trajCount > 0) r.avgTraj = Math.round(r.trajSum / r.trajCount);
+    if (r.passed > 0) r.dollarsPerPass = r.spend / r.passed;
+    if (r.dollarsPerPass != null && r.avgTraj != null && r.avgTraj > 0) {
+      r.weightedDollarsPerPass = r.dollarsPerPass / (r.avgTraj / 100);
+    }
+    if (r.latenciesMs.length > 0) {
+      r.p50LatencyMs = percentile(r.latenciesMs, 0.5);
+      r.p95LatencyMs = percentile(r.latenciesMs, 0.95);
+    }
+  }
+  return [...bySlug.values()];
+}
+
+export function percentile(values: number[], p: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * p)));
+  return sorted[idx];
+}
+
+/** Rank lanes for the "Best value" / "Cheapest raw" / "Winner" callouts. */
+export interface LaneRankings {
+  bestValue: LaneRollup | null;      // lowest weighted $/pass with ≥1 pass
+  cheapestRaw: LaneRollup | null;    // lowest raw $/pass with ≥1 pass
+  highestTraj: LaneRollup | null;    // highest avg traj
+  mostExpensive: LaneRollup | null;  // highest weighted $/pass with ≥1 pass
+}
+
+export function rankLanes(lanes: LaneRollup[]): LaneRankings {
+  const passing = lanes.filter((l) => l.passed > 0);
+  const withWeighted = passing.filter((l) => l.weightedDollarsPerPass != null);
+  const withRaw = passing.filter((l) => l.dollarsPerPass != null);
+  const withTraj = lanes.filter((l) => l.avgTraj != null);
+  const sortedWeighted = [...withWeighted].sort((a, b) => a.weightedDollarsPerPass! - b.weightedDollarsPerPass!);
+  return {
+    bestValue: sortedWeighted[0] ?? null,
+    mostExpensive: sortedWeighted[sortedWeighted.length - 1] ?? null,
+    cheapestRaw: [...withRaw].sort((a, b) => a.dollarsPerPass! - b.dollarsPerPass!)[0] ?? null,
+    highestTraj: [...withTraj].sort((a, b) => b.avgTraj! - a.avgTraj!)[0] ?? null,
+  };
+}
+
 // ---------- convenience: file existence ----------
 
 export function jsonlExists(configDir: string, runId: string): boolean {

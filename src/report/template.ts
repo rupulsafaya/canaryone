@@ -1,16 +1,17 @@
 // HTML shell — a template literal joined from the section renderers.
-// Section order:
-//   Hero (metadata + primer)
-//   00 Data inventory (scaffold, collapsed by default)
-//   01..05 stubs (phase 1)
+// Structure:
+//   Hero (always visible: title + meta + collapsible primer)
+//   Tab nav (Report / Data inventory)
+//   Tab panel "Report": sections 01..05
+//   Tab panel "Data inventory": section 00 scaffold
 
 import { STYLES } from './styles.js';
 import { SCRIPTS } from './scripts.js';
 
 export interface RenderedSections {
   hero: string;
-  inventory: string;
-  stubs: string;
+  report: string;      // sections 01..05 concatenated
+  inventory: string;   // section 00 (data inventory)
 }
 
 export function shell(runId: string, targetDir: string, sections: RenderedSections): string {
@@ -22,7 +23,7 @@ export function shell(runId: string, targetDir: string, sections: RenderedSectio
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
-<meta name="generator" content="canaryone report generator (phase 0)">
+<meta name="generator" content="canaryone report generator (phase 1)">
 <meta name="generated-at" content="${generatedAt}">
 <meta name="target-dir" content="${escapeAttr(targetDir)}">
 <style>${STYLES}</style>
@@ -30,8 +31,19 @@ export function shell(runId: string, targetDir: string, sections: RenderedSectio
 <body>
 <div class="wrap">
 ${sections.hero}
+
+<nav class="tabs" role="tablist">
+  <button class="tab-btn active" data-tab="tab-report" role="tab">Report</button>
+  <button class="tab-btn" data-tab="tab-inventory" role="tab">Data inventory <span class="muted" style="font-weight: 400;">· scaffold</span></button>
+</nav>
+
+<div class="tab-panel active" id="tab-report" role="tabpanel">
+${sections.report}
+</div>
+
+<div class="tab-panel" id="tab-inventory" role="tabpanel">
 ${sections.inventory}
-${sections.stubs}
+</div>
 </div>
 <script>${SCRIPTS}</script>
 </body>

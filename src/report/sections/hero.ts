@@ -52,10 +52,17 @@ export function renderHero(data: RunData): string {
     <tr><td class="label">Total spend</td><td><strong>${fmtDollars(totalSpend)}</strong></td></tr>
   </table>
 
-  <div class="metric-primer">
-    <p style="margin: 0"><strong>How we measure.</strong> The report's primary comparison metric is <strong>weighted \$/pass</strong> — the dollars you'd spend to get one grounded pass on your workload, penalizing passes that succeeded by narration instead of real work.</p>
-    <span class="formula">weighted \$/pass  =  \$/pass  ÷  (trajectory_score / 100)</span>
-    <p style="margin: 10px 0 0 0">Raw \$/pass counts every passing exit-code as equal. Trajectory score (0-100) is a canaryone-judge composite of Action + Grounding + Verification + Efficiency — how the model actually got to the answer. Weighted \$/pass collapses "cheap" and "actually good" into one number so there's a single best per run, not a Pareto curve.</p>
-  </div>
+  <details open class="metric-primer" style="display: block; padding: 0;">
+    <summary style="cursor: pointer; padding: 14px 18px; font-weight: 600; list-style: none; outline: none;">
+      <span style="color: var(--accent); margin-right: 6px;">▾</span>
+      How we measure
+      <span class="muted" style="font-weight: 400; font-size: 12.5px;">— click to collapse</span>
+    </summary>
+    <div style="padding: 0 18px 14px 18px;">
+      <p style="margin: 0"><strong>The report's primary comparison metric is <span style="color: var(--accent);">weighted \$/pass</span></strong> — the dollars you'd spend to get one grounded pass on your workload, penalizing passes that succeeded by narration instead of real work.</p>
+      <span class="formula">weighted \$/pass  =  \$/pass  ÷  (trajectory_score / 100)</span>
+      <p style="margin: 10px 0 0 0">Raw \$/pass counts every passing exit-code as equal. Trajectory score (0-100) is a canaryone-judge composite of Action + Grounding + Verification + Efficiency — how the model actually got to the answer. Weighted \$/pass collapses "cheap" and "actually good" into one number so there's a single best per run, not a Pareto curve.</p>
+    </div>
+  </details>
 </section>`;
 }
