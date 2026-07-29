@@ -14,7 +14,8 @@
     "test:runner": "tsx tests/runner.test.mjs",
     "test:judge": "tsx tests/judge-trajectory.test.mjs",
     "test:providers": "tsx tests/providers.test.mjs",
-    "test:env-file": "tsx tests/env-file.test.mjs"
+    "test:env-file": "tsx tests/env-file.test.mjs",
+    "test:provider-catalog": "tsx tests/provider-catalog.test.mjs"
   },
   "engines": {
     "node": ">=22"
