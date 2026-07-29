@@ -399,6 +399,14 @@ export const useStore = create<State>((set, get) => ({
     engine.bus.on('session:running', (u) => applyCellUpdate(u));
     engine.bus.on('session:complete', (u) => applyCellUpdate(u));
     engine.bus.on('session:failed', (u) => applyCellUpdate(u));
+    // 'run:sessionsComplete' fires as soon as all runOne workers exit; the
+    // judge pool may still be draining in the background. Flip the visible
+    // state now so the title doesn't sit on "Running" for the judge tail.
+    // 'run:complete' still fires later (after drain); we clear the engine
+    // handle then so any late abort is a no-op.
+    engine.bus.on('run:sessionsComplete', () => {
+      set({ runFinishedAt: Date.now() });
+    });
     engine.bus.on('run:complete', () => {
       set({ runFinishedAt: Date.now(), engine: null });
     });

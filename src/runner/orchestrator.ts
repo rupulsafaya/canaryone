@@ -180,6 +180,16 @@ export class RunEngine {
     const workers = Array.from({ length: Math.min(parallelism, sessions.length) }, () => worker());
     await Promise.all(workers);
 
+    // All sessions finished. Flip the visible state RIGHT NOW so the TUI's
+    // title changes to "Run complete" without waiting on the judge's trailing
+    // Haiku calls (the drain below can add several seconds for large runs).
+    if (!this.aborted) {
+      this.bus.emit('run:sessionsComplete', {
+        runId: spec.runId, targetDir: spec.targetDir,
+        totalSessions: sessions.length, totalCost,
+      });
+    }
+
     if (judgePool) await judgePool.drain();
 
     const finishedAt = new Date().toISOString();

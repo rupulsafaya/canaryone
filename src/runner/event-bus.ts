@@ -56,15 +56,21 @@ export interface JudgeUpdate {
 }
 
 export type EventMap = {
-  'run:started':      RunEvent;
-  'run:complete':     RunEvent & { totalCost: number };
-  'run:aborted':      RunEvent & { reason: string };
-  'session:queued':   CellUpdate;
-  'session:running':  CellUpdate;
-  'session:step':     StepUpdate;
-  'session:complete': CellUpdate;
-  'session:failed':   CellUpdate;
-  'session:judged':   JudgeUpdate;
+  'run:started':          RunEvent;
+  /**
+   * All runOne workers exited but the judge worker pool may still be draining.
+   * Fires BEFORE 'run:complete' so the TUI can flip the title immediately
+   * instead of waiting on the judge's trailing Haiku calls.
+   */
+  'run:sessionsComplete': RunEvent & { totalCost: number };
+  'run:complete':         RunEvent & { totalCost: number };
+  'run:aborted':          RunEvent & { reason: string };
+  'session:queued':       CellUpdate;
+  'session:running':      CellUpdate;
+  'session:step':         StepUpdate;
+  'session:complete':     CellUpdate;
+  'session:failed':       CellUpdate;
+  'session:judged':       JudgeUpdate;
 };
 
 type Listener<K extends keyof EventMap> = (payload: EventMap[K]) => void;
