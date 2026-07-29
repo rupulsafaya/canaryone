@@ -106,45 +106,175 @@ The count of tool_calls per session can be derived from `steps` via the JSONL by
 
 - **No framework.** Vanilla HTML + inline CSS + inline JS. Reason: reports need to open offline, attach to emails, work when opened via `file://`, and survive a decade. React/Next/Vue add fragility.
 - **CSS variables + Tailwind-inspired utility class names** are fine — but write them out explicitly, don't ship Tailwind.
-- **Charts:** if you want inline charts (sparklines etc.), use SVG hand-written or a tiny lib inlined (Chart.js is ~100 KB, acceptable). Do NOT use anything that requires a network fetch.
+- **Charts:** if you want inline charts (sparklines etc.), use SVG hand-written or **inline Chart.js** (~100 KB minified — embed the whole source into `<script>` tags, do NOT `<script src="cdn...">`). Anything requiring a network fetch is banned.
 - **Interactivity:** vanilla JS. Expand/collapse via `<details>`/`<summary>` where possible (native, zero JS). Sortable table via a tiny hand-written listener (~30 lines).
 - **Fonts:** system stack. `-apple-system, BlinkMacSystemFont, "Segoe UI", ...`. Monospace: `ui-monospace, "SF Mono", Menlo, monospace`.
-- **Dark theme, default.** No light-mode toggle for v0.
+- **Light theme, default.** White background, black ink, blue accent — matches the aesthetic of tools users share to Slack / PRs / Twitter. Reference: `~/Documents/GitHub/product0/reports/oc-deepseek-2026-07-17/index.html`. Terminal (canaryone TUI) is the dark surface; the report is the presentable surface. No dark-mode toggle for v0.
 
 ---
 
 ## 6. File structure
 
-Bhaskar creates:
+File layout (phase 0 ships lines marked `[P0]`; phase 1 fills in `[P1]`):
 
 ```
 src/report/
-  generate.ts         ← entry point: reads db + jsonl, emits index.html
-  template.ts         ← the HTML shell (as a template literal)
+  generate.ts             [P0] entry point: reads db + jsonl, emits index.html.
+                                Returns absolute path to the written file.
+  data.ts                 [P0] SQLite read helpers + JSONL iterator + JSON body
+                                enumerator (recursive key/type walker for Layer 3).
+  template.ts             [P0] HTML shell (as a template literal): <head>, styles,
+                                scripts, then slots for each section.
+  styles.ts               [P0] embedded CSS (light theme, product0-style)
+  scripts.ts              [P0] embedded JS: sort, expand, chip-filter dispatch,
+                                Chart.js UMD (inlined verbatim — no CDN)
   sections/
-    header.ts         ← run metadata block
-    heatmap.ts        ← lanes × tasks heatmap
-    lane-table.ts     ← sortable lane summary table
-    session-list.ts   ← collapsible per-session drilldown
-    aggregate.ts      ← cheapest/most-expensive/spread stats
-  styles.ts           ← the embedded CSS as a string
-  scripts.ts          ← the embedded JS as a string (sort, expand)
-  data.ts             ← SQLite read helpers + JSONL iterator
+    hero.ts               [P0] metadata block + "how we measure" primer
+    inventory.ts          [P0] the §7.0 scaffold — Layers 1-4
+    header.ts             [P1] leaderboard headline cards
+    heatmap.ts            [P1] lanes × tasks heatmap
+    lane-table.ts         [P1] sortable lane summary table
+    session-list.ts       [P1] collapsible per-session drilldown
+    aggregate.ts          [P1] cheapest/most-expensive/spread stats
 tests/
-  report.test.mjs     ← generate against a known fixture run, snapshot the output
+  report.test.mjs         [P1] snapshot test against tests/fixtures/canned-run-1
 ```
 
-Bhaskar owns everything under `src/report/`. Rupul owns everything else. If Bhaskar needs a new column in SQLite or a new record shape in JSONL, he files a request; Rupul makes the change on the runner side.
+Phase 0 sections that don't exist yet (leaderboard, heatmap, lane-table, session-list, aggregate) render as `<section class="stub"><h2><span class="sec-num">NN</span>Title</h2><p class="muted">Phase 1: TODO</p></section>` placeholders so the page structure is complete and the section numbering stays consistent.
 
-**CLI integration** (Rupul wires this at the end of D3): `c1 runs report <runId>` (and auto-runs on run completion). Rupul stubs this and calls `import('./report/generate').generate(runId, configDir)` — Bhaskar just needs to export that function.
+Bhaskar owns everything under `src/report/sections/` (phase 1). Rupul owns `src/report/{generate,data,template,styles,scripts}.ts` + `src/report/sections/inventory.ts` (phase 0). If Bhaskar needs a new column in SQLite or a new record shape in JSONL, he files a request; Rupul makes the change on the runner side.
+
+**Phase 0 CLI integration** (Rupul, this session):
+- Orchestrator auto-generates the report AFTER `judgePool.drain()` and BEFORE emitting `run:complete`. Emits a `report:generating` bus event on start, `report:generated` (with the file path) on finish. Gated on `spec.generateReport !== false` (default true).
+- `RunSpec` gains `generateReport?: boolean` (default true) and `reportPath` accumulates on the store via the `report:generated` event.
+- LiveProgress "Run complete" screen keybindings:
+  - `enter` → open the report in the default browser (was: open run dir)
+  - `o` → open the run dir in the file manager (unchanged)
+  - `r` → run again (unchanged)
+  - `q` → quit (unchanged)
+  Footer text updated accordingly.
+- New CLI subcommand `c1 runs report <runId>` — regenerates + opens the report. Stub added phase 0; body calls `generate(runId, configDir)` from `src/report/generate.ts`.
+
+The `generate(runId, configDir)` entry point returns `Promise<string>` — the absolute path to the written HTML. Bhaskar's phase 1 replaces the section stubs but keeps this signature stable.
 
 ---
 
 ## 7. Visual layout — ASCII wireframes
 
-Terminal-style dark theme. Green = pass, red = fail, amber = uncertain, gray = queued/skipped. Cost shown at scale-appropriate precision.
+Light theme (see §8). Green = pass, red = fail, amber = uncertain / warn, gray = queued/skipped/muted. Cost shown at scale-appropriate precision.
 
-### 7.1 Header
+Sections are numbered `00`, `01`, `02`, ... — one `<h2>` per section with a monospace `sec-num` prefix. Every non-trivial section carries an inline `<details class="explain">` "How to read this" block, open by default on first render.
+
+### 7.0 Data inventory (scaffold — phase 0, will be removed)
+
+**Purpose:** before the real sections are designed, this scaffold surfaces every field / log the runner records for this run. We look at it once, decide which fields carry signal, and translate those observations into the real sections in a later pass. It's an editor's tool, not a viewer's tool. Keep it as `section 00`, always collapsed by default, so real users don't see it as the money-shot.
+
+Layout: one `<section id="s0">` with three nested `<details>` blocks, one per layer.
+
+**Layer 1 — SQLite schema + row counts.** Every table in `.c1/db.sqlite`, plus `traffic.jsonl` as a virtual "table":
+
+```
+▶ Layer 1 · SQLite tables (5) + traffic.jsonl (1 file)
+
+   runs                    (1 row)         columns: id, started_at, finished_at, status,
+                                                    target_dir, meta_json
+   sessions                (18 rows)       columns: id, run_id, task_id, task_file,
+                                                    model_slug, destination_slug, router,
+                                                    repeat_ix, status, started_at,
+                                                    finished_at, cost_usd, verify_exit_code,
+                                                    verify_stdout_tail, verify_stderr_tail,
+                                                    failure_class, worktree_path, proxy_port
+   steps                   (144 rows)      columns: id, session_id, step_ix, ...
+   classifier_tags         (144 rows)      columns: id, session_id, dimension, value,
+                                                    confidence, generated_at, model,
+                                                    classifier_id, classifier_version
+   tasks_meta              (2 rows)        columns: task_id, file, summary, uses_llm
+
+   traffic.jsonl           (232 records)   kinds: request=115, response=115,
+                                                    session-start=1, session-end=1
+```
+
+**Layer 2 — value distributions per column.** For each column, one row showing what values actually appear in this run. This is what makes the scaffold useful:
+
+- **Numeric** (`cost_usd`, `latency_ms`, `input_tokens`, `output_tokens`): `min · max · avg · non-null count`
+- **Enum-like** (`status`, `router`, `model_slug`, `destination_slug`, `dimension`): top-N values with counts, e.g. `openrouter=18`. When a column has only one distinct value, display it **dimmed** — flags "dead field for this run, not useful in a comparison view."
+- **Free text** (reasoning strings, `verify_stdout_tail`, `verify_stderr_tail`): row count, avg length, first ~200 chars of the longest sample
+- **Timestamps** (`started_at`, `finished_at`, `generated_at`): earliest → latest, total span
+- **IDs / UUIDs**: unique count only (values themselves aren't useful)
+
+Rendered as one dense `<table>` per SQLite table, columns `[column · type · distribution · sample]`.
+
+**Layer 3 — JSON body inspector.** The `body` field in `traffic.jsonl` records and the `meta_json` field in `runs` are JSON blobs where the actual content lives (model, messages, choices, usage, tool_calls). Enumerate keys recursively for these:
+
+```
+▶ Layer 3 · JSON body shapes
+
+   traffic.jsonl · kind=request · body
+     .model                     string   "z-ai/glm-5.2"  (constant across 115 requests)
+     .messages                  array    length 1..12 (avg 4.2)
+       .messages[].role         enum     user=460, assistant=... tool=...
+       .messages[].content      string   avg 620 chars, max 8400
+       .messages[].tool_calls   array    present in N/460 messages
+     .max_tokens                number   min 100, max 4000
+     .stream                    boolean  false (constant)
+     .provider                  object   present in 115 requests, { order: [providerTag] }
+
+   traffic.jsonl · kind=response · body
+     .id                        string   115 unique
+     .model                     string   "z-ai/glm-5.2" (constant, matches request)
+     .choices                   array    length 1 (constant)
+       .choices[].message.content       string   avg 220 chars
+       .choices[].message.tool_calls    array    present in N/115 (0..3 calls each)
+       .choices[].finish_reason         enum     stop=X, tool_calls=Y, length=Z
+     .usage                     object   { prompt_tokens, completion_tokens, total_tokens }
+
+   runs.meta_json
+     .runId, .startedAt, .targetDir, .configDir, .parallelism, .repeats
+     .lanes[]  ← model, destination, router
+     .tasks[]  ← id, file
+```
+
+Rendered as a recursive tree. Each nested field shows its type + a one-line distribution (constant / range / enum). Blob values not shown here — cross-linked to the session drilldown (§7.4) for full payloads.
+
+**Layer 4 — Candidate computed metrics.** Editorial, not from schema. Pre-populated with metrics we know we want; a `<!-- TODO -->` list of possible additions. Renders as two adjacent columns:
+
+```
+Ready today (already computed in src/runner/print-summary.ts)          Possible additions (rip out or keep)
+──────────────────────────────────────────────────────────────         ────────────────────────────────────
+Total spend:  $0.0429                                                  Per-repeat variance (cost, latency, traj)
+Elapsed:      9m04s                                                    p50/p95 latency per lane
+Pass rate:    18/18 (100%)                                             Cache utilization (if OR returns it)
+Best value:   openrouter:baseten/fp4  ($0.0128 weighted per pass)      Trajectory sub-score histograms
+Cheapest raw: openrouter:baseten/fp4  ($0.006121 per pass)             Tool-call count per session
+Traj range:   47–50 across all sessions (⚠ workload doesn't            Refusal rate (final-content=empty)
+              exercise traj — see §4.5)                                Failure taxonomy (auth / rate / 5xx)
+Per-lane:     baseten/fp4 vs phala rollup (see below)                  Judge disagreement rate per lane
+```
+
+The point of this panel: after we've looked at the run, we know what's worth promoting into a real numbered section. The scaffold's job is done once we've decided.
+
+### 7.1 Header (with "how we measure" primer)
+
+The hero has TWO parts:
+
+**Part A: metadata block** — the ASCII wireframe below.
+**Part B: "how we measure" primer** — a bordered callout that names the primary metric (**weighted $/pass**), displays the formula, and explains the semantics in one paragraph. Reference: product0 report's `.metric-primer` block. This sets the frame BEFORE the leaderboard renders, so a cold viewer doesn't have to reverse-engineer the columns.
+
+```
+┌─ How we measure ─────────────────────────────────────────────────────────────┐
+│ Every ranking in this report is denominated in **weighted $/pass** — the     │
+│ dollars you'd spend to get one grounded pass on your workload, penalizing    │
+│ passes that succeeded by narration instead of real work.                     │
+│                                                                              │
+│   weighted $/pass  =  $/pass  ÷  (trajectory_score / 100)                    │
+│                                                                              │
+│ Raw $/pass counts every passing exit-code as equal. Trajectory score         │
+│ (0-100) is a canaryone-judge composite of Action + Grounding + Verification  │
+│ + Efficiency — how the model actually got to the answer. Weighted $/pass     │
+│ collapses "cheap" and "actually good" into one number so there's a single    │
+│ best per run, not a Pareto curve.                                            │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -279,50 +409,62 @@ The Groq call-out is the tweet money-shot: cheapest by raw metric, but a 34/100 
 
 ## 8. Color palette
 
-Dark theme, terminal-aesthetic:
+Light theme. Palette adapted from `~/Documents/GitHub/product0/reports/oc-deepseek-2026-07-17/index.html` — same visual vocabulary so a viewer moving between the two reports feels one continuous product family.
 
 ```
---bg-primary       #0a0a0f    /* page background */
---bg-secondary     #12121a    /* card / section background */
---bg-tertiary      #1a1a26    /* row hover, expanded state */
---border           #2a2a3a
---text-primary     #e4e4e7    /* headings, primary text */
---text-secondary   #a1a1aa    /* labels, secondary */
---text-muted       #52525b    /* de-emphasized */
+--bg           #ffffff    /* page background */
+--panel        #fafafa    /* card / section background */
+--ink          #1a1a1a    /* body text, headings */
+--muted        #6b7280    /* labels, secondary text, section numbers */
+--line         #e5e7eb    /* borders, dividers */
+--line-strong  #d1d5db    /* stronger borders (row separators) */
 
---accent           #22d3ee    /* cyan — links, highlights */
---accent-hover     #67e8f9
+--accent       #2563eb    /* blue — links, primary highlight */
 
-/* Status */
---status-pass      #22c55e    /* green — passed sessions, "grounded" */
---status-fail      #ef4444    /* red — failed sessions */
---status-warn      #eab308    /* amber — uncertain, "narrated" */
---status-info      #3b82f6    /* blue — running, informational */
---status-muted     #71717a    /* gray — queued, skipped */
+/* Status (used by outcome/cell backgrounds AND the "safe/marginal/regression" family) */
+--winner       #16a34a    /* green ink — winner rows */
+--winner-bg    #dcfce7    /* winner row background */
+--winner-ink   #14532d
+--safe         #16a34a    /* pass, "grounded" */
+--safe-bg      #dcfce7
+--marginal     #ca8a04    /* amber — uncertain, "narrated" warning */
+--marginal-bg  #fef9c3
+--regression   #dc2626    /* red — failed, unreachable */
+--regression-bg #fee2e2
+--unusable-bg  #f3f4f6    /* gray — skipped, no-data */
+--unusable-ink #6b7280
+--unreachable-bg #fef2f2  /* rose — 0% pass rate */
+--unreachable-ink #991b1b
 
-/* Heatmap gradient (cheap → expensive) */
---heat-1           #059669    /* darkest green (cheapest) */
---heat-2           #10b981
---heat-3           #34d399
---heat-4           #86efac
---heat-5           #fef3c7
---heat-6           #fdba74
---heat-7           #f97316
---heat-8           #ef4444    /* red (most expensive) */
+/* Router / quantization badges (product0 pattern — reusable for canaryone's router column) */
+--router-openrouter #22d3ee   /* cyan */
+--router-direct     #7c3aed   /* violet */
+--router-vercel     #0891b2
+--router-cloudflare #f97316
 
-/* Family colors — carry over from TUI */
+/* Family colors — carry over from TUI so the same model reads the same in both surfaces */
 --family-anthropic #D97757
 --family-openai    #a855f7
 --family-google    #4ade80
 --family-deepseek  #00B7B5
 --family-moonshot  #e879f9
---family-other     #94a3b8
+--family-other     #64748b
 ```
 
 Typography:
-- Base 14 px / 20 px line-height
-- Headings 16 px / 20 px / 24 px (h3/h2/h1)
-- Monospace for cost, model slugs, code blocks
+- Base 14 px / 1.5 line-height (product0 convention)
+- Headings 15 px / 20 px / 28 px (h3/h2/h1), weight 600, letter-spacing -0.01em
+- `font-variant-numeric: tabular-nums` on any cell that shows numbers — non-negotiable, tables must align
+- Monospace stack: `"SF Mono", ui-monospace, Consolas, monospace` at 12.5 px for cost, model slugs, code blocks
+
+### 8.1 Row shading conventions (from product0)
+
+For rows in the leaderboard / lane table:
+
+- Winner row (best weighted $/pass among passing lanes): `background: var(--winner-bg)`
+- 0-pass lane: `background: var(--unreachable-bg)` with muted ink
+- Rows with only computed sub-scores + judge_ok=false: `background: var(--unusable-bg)` — "judge failed, treat with skepticism"
+- All other rows: default `--bg`
 
 ---
 
@@ -399,19 +541,34 @@ If a session's response body is huge (e.g. 100 KB), don't inline the full text �
 - **Snapshot test:** `tests/report.test.mjs` — generates a report against a canned run (checked in under `tests/fixtures/canned-run-1/`), asserts key strings appear in the output ("Run report", cheapest lane, session count). Not a byte-for-byte snapshot; content-check.
 - **Visual test:** open the generated report locally, screenshot, share with Rupul for a quick review. Not automated for v0.
 
-## 12. Exit criterion for Bhaskar's PR
+## 12. Exit criterion
 
-- `tests/report.test.mjs` passes.
-- Opening `.c1/runs/<runId>/report/index.html` in Chrome, Safari, and Firefox shows all sections without console errors.
-- File is under 1 MB for a 24-session run.
-- All sections render even when some data is missing (e.g. no `classifier_tags` for pre-judge runs — just hide the "trajectory quality" column gracefully).
+### Phase 0 (this conversation — Rupul, 2026-07-29)
+
+Ships the plumbing + the scaffold, before the "real" sections are designed:
+
+- `src/report/generate.ts` writes a self-contained `.c1/runs/<runId>/report/index.html` when called with `(runId, configDir)`.
+- Report includes: hero (metadata + "how we measure" primer, §7.1), and the `00 Data inventory` scaffold (§7.0) with all four layers. Real sections (leaderboard, lane table, heatmap, session drilldown, aggregate) are stubbed as `TODO` placeholders — they render in phase 1 (Bhaskar).
+- Orchestrator auto-generates the file after `judgePool.drain()`, before emitting `run:complete`. Console/subtitle shows `generating report…` during the write (~100-500 ms).
+- LiveProgress "Run complete" screen has `enter` opening the report in the default browser (was: `enter` opens run dir; now `o` alone opens the dir; `v` also opens the report — see §6 "CLI integration").
+- Opens cleanly via `file://` in Chrome, Safari, Firefox. Zero console errors, zero network requests.
+
+### Phase 1 (Bhaskar's PR)
+
+- Real numbered sections implemented (leaderboard, lane table, heatmap, session drilldown, aggregate).
+- Scaffold `00 Data inventory` collapsed by default; can be removed once real sections cover its role.
+- `tests/report.test.mjs` snapshot test passes.
+- File under 1 MB for a 24-session run.
+- Graceful degradation for runs without judge tags (per §4.5 heuristic).
 
 ## 13. Provenance + hand-off
 
 - Written by Rupul in session `c1-bld2807-2`, 2026-07-29.
-- Delivered to Bhaskar via `git pull main` — read this doc, ask questions in Slack, start on `src/report/`.
+- Revised 2026-07-29 (session `c1-bld2907-judge`) after SPEC 1 Part B (judge) landed on main. Added §7.0 (data inventory scaffold), §4.4 (prior-art pointer), §4.5 (traj⚠ interpretation), phase-0 exit criterion.
+- **Visual reference:** `~/Documents/GitHub/product0/reports/oc-deepseek-2026-07-17/index.html` — a shipped, polished report that already implements the "how we measure" primer, numbered sections with inline explainers, headline card row, chip filters, and From/To decision matrix. When Bhaskar starts on phase 1, this is the visual language to match.
+- Phase 0 lands in this session (auto-gen + LiveProgress wire + hero + scaffold). Phase 1 delivered to Bhaskar via `git pull main` — read this doc + open the phase 0 output, then start on the real numbered sections under `src/report/sections/`.
 - Any schema questions → ping Rupul; runner changes are Rupul-owned.
-- Rupul lands a stub CLI: `c1 runs report <runId>` calls `generate(runId, configDir)` — Bhaskar just needs to export that function from `src/report/generate.ts`.
+- CLI: `c1 runs report <runId>` regenerates the report post-hoc. Phase 0 wires the internal call from the orchestrator; the CLI subcommand ships alongside.
 
 ---
 
