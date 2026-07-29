@@ -60,6 +60,9 @@ export function ApiKeys() {
   const orCatalog = useStore((s) => s.orCatalog);
   const loadProviderCatalogs = useStore((s) => s.loadProviderCatalogs);
   const loadCatalog = useStore((s) => s.loadCatalog);
+  const resumeFromCache = useStore((s) => s.resumeFromCache);
+  const forceWizard = useStore((s) => s.forceWizard);
+  const [advancing, setAdvancing] = useState(false);
 
   const rows = useMemo<RowSpec[]>(() => buildRows(), []);
   const [rowStates, setRowStates] = useState<Record<string, RowState>>(() => initialRowStates(rows));
@@ -230,7 +233,16 @@ export function ApiKeys() {
         return;
       }
       if (key.return) {
-        if (canAdvance) goTo('onboarding');
+        if (!canAdvance || advancing) return;
+        setAdvancing(true);
+        void (async () => {
+          // Skip the wizard when the target has cached scan + config + methodology
+          // + at least one included task. --wizard (or the store flag) forces
+          // the full flow.
+          const resumed = forceWizard ? false : await resumeFromCache();
+          setAdvancing(false);
+          goTo(resumed ? 'pickRoutes' : 'onboarding');
+        })();
         return;
       }
       const row = rows[selectedIx];

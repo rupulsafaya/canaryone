@@ -16,6 +16,8 @@ const cli = meow(
     --config-dir <dir>          where .c1/ lives (default: <target>/.c1)
     --rescan                    force re-run of deterministic scan
     --rescan-methodology        force re-run of methodology detection (bypasses cache)
+    --wizard                    walk through onboarding + methodology + task pick again
+                                (default: skip when the target has a complete cache)
     --start <screen>            jump straight to a screen (apiKeys|onboarding|summarizeTasks|methodologyCheck|pickTasks|taskDetail|pickRoutes|pickModels|pickDestinations|confirm|liveProgress)
     --help
   `,
@@ -26,6 +28,7 @@ const cli = meow(
       configDir: { type: 'string' },
       rescan: { type: 'boolean', default: false },
       rescanMethodology: { type: 'boolean', default: false },
+      wizard: { type: 'boolean', default: false },
       start: { type: 'string' },
     },
   },
@@ -41,6 +44,7 @@ useStore.setState({
   cwd: targetDir,
   forceRescan: cli.flags.rescan,
   forceRescanMethodology: cli.flags.rescanMethodology,
+  forceWizard: cli.flags.wizard,
 });
 
 if (cli.flags.start) {

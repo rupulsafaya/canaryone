@@ -4,7 +4,8 @@ import type { Config, MethodologyReport, ORKeySource, OrCatalog } from '../data/
 import type { DeterministicScan } from '../scan/deterministic.js';
 import type { MatchedFile } from '../scan/glob.js';
 import { loadOrCatalog, fetchModelEndpoints, readCachedEndpoints } from '../scan/or-catalog.js';
-import { detectOrKey, writeConfig } from './../scan/orchestrator.js';
+import { detectOrKey, writeConfig, runFirstRunScan } from './../scan/orchestrator.js';
+import { matchFiles } from '../scan/glob.js';
 import { getProvider, resolveUrlTemplate, readEnv, DIRECT_PRICING } from '../proxy/providers.js';
 import { loadCatalogs, type ProviderCatalogs } from '../scan/provider-catalog.js';
 import { loadRoutePicks, saveRoutePicks } from '../scan/route-picks.js';
@@ -41,6 +42,8 @@ type State = {
   targetDir: string;
   configDir: string;
   forceRescan: boolean;
+  /** True when the user passed --wizard to force the full onboarding flow. */
+  forceWizard: boolean;
   forceRescanMethodology: boolean;
   scanResult: DeterministicScan | null;
   config: Config | null;
@@ -107,6 +110,7 @@ type State = {
   setOrKey: (present: boolean, source: ORKeySource | null) => void;
   setMatchedFiles: (files: MatchedFile[]) => void;
   loadMethodology: (force?: boolean) => Promise<void>;
+  resumeFromCache: () => Promise<boolean>;
   loadCatalog: (force?: boolean) => Promise<void>;
   loadProviderCatalogs: () => Promise<void>;
   refreshProviderCatalog: (providerSlug: string, token: string | null) => Promise<void>;
@@ -255,6 +259,7 @@ export const useStore = create<State>((set, get) => ({
   configDir: process.cwd() + '/.c1',
   forceRescan: false,
   forceRescanMethodology: false,
+  forceWizard: false,
   scanResult: null,
   config: null,
   orKeyPresent: false,
@@ -300,6 +305,49 @@ export const useStore = create<State>((set, get) => ({
   setConfig: (c) => { set({ config: c }); get().applyConfigToTasks(); },
   setOrKey: (present, source) => set({ orKeyPresent: present, orKeySource: source }),
   setMatchedFiles: (files) => set({ matchedFiles: files }),
+  /**
+   * If the target dir has a complete cached wizard state — runner + matched
+   * files + methodology + ≥1 included task — hydrate the store and return
+   * true so callers can skip Onboarding/SummarizeTasks/MethodologyCheck/PickTasks
+   * and jump straight to PickRoutes. Return false when any piece is missing.
+   *
+   * Reads are cache-first: runFirstRunScan uses ~/.c1/scan.json + config.json;
+   * methodology cache lives on config.methodology.
+   */
+  resumeFromCache: async (): Promise<boolean> => {
+    const s = get();
+    let result;
+    try {
+      result = await runFirstRunScan({
+        targetDir: s.targetDir,
+        configDir: s.configDir,
+        forceRescan: false,
+      });
+    } catch {
+      return false;
+    }
+    const config = result.config;
+    if (!config) return false;
+    if (!config.runner?.cmd) return false;
+    if (!config.methodology) return false;
+    if (!Array.isArray(config.tasks?.included) || config.tasks.included.length === 0) return false;
+
+    // Populate matched files from the cached glob so downstream code
+    // (methodology fresh-check, etc.) has the file list.
+    const files = await matchFiles(s.targetDir, config.testGlob.pattern);
+    if (files.length === 0) return false;
+
+    // Hydrate.
+    set({ matchedFiles: files });
+    get().setConfig(config);   // triggers applyConfigToTasks
+    // loadMethodology reads config.methodology if fresh — no network unless
+    // the file mtimes have changed since the cached scan.
+    await get().loadMethodology(false);
+    // Fail closed: if methodology couldn't hydrate to a runnable state, don't skip.
+    const st = get().methodologyStatus;
+    if (st !== 'ready' && st !== 'blocked') return false;
+    return true;
+  },
   loadMethodology: async (force = false) => {
     const s = get();
     if (s.methodologyStatus === 'loading') return;
