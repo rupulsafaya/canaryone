@@ -17,23 +17,42 @@ import type { ProviderCatalogs } from '../scan/provider-catalog.js';
 import type { VercelEndpoint } from '../scan/vercel-endpoints.js';
 import { ROUTERS, DIRECT_PROVIDERS, DIRECT_PRICING } from '../proxy/providers.js';
 
+/**
+ * Nomenclature (locked in memory + SPEC 3):
+ *   Model    — canonical model identity (Kimi K3, GLM 5.2)
+ *   Router   — the gateway/proxy layer (OpenRouter, Vercel, Bedrock, direct)
+ *   Provider — the underlying HOST serving the model (Baseten, Fireworks,
+ *              Moonshot AI, Nebius…) — distinct from Router!
+ *   Variant  — quantization or tier variant of a provider (fp8, mxfp4)
+ *   Destination = (Router, Provider[, Variant]) tuple — one lane.
+ *
+ * The 'providerSlug' field name predates this cleanup and is now legacy —
+ * it actually names the ROUTER registry key ('openrouter', 'vercel', ...).
+ * A future rename would touch too many call sites; the type comments below
+ * spell out the current semantics so nobody drifts again.
+ */
 export interface Route {
-  /** Stable primary key. Format: `${providerSlug}::${wireSlug}` (or `...::variant::${variantSlug}` for gateway underlying-provider routes). */
+  /** Stable primary key. Format: `${routerSlug}::${wireSlug}` (or `...::variant::${variantSlug}` for gateway underlying-provider routes). */
   id: string;
-  /** Provider registry slug: 'openrouter' | 'vercel' | 'bedrock' | 'direct:<name>'. */
+  /** Router registry slug: 'openrouter' | 'vercel' | 'bedrock' | 'direct:<provider>'. Legacy field name. */
   providerSlug: string;
-  /** Short display badge shown next to the route: 'via OR', 'Vercel', 'Fireworks', etc. */
-  providerDisplayName: string;
+  /** Human router label — 'OpenRouter', 'Vercel', 'Bedrock', 'direct'. Shown in the Router column. */
+  routerLabel: string;
+  /**
+   * Human PROVIDER (host) label — 'Baseten (fp8)', 'Fireworks', 'Moonshot AI (intl)',
+   * '(any)' for a gateway route with no pinned upstream. Shown in the Provider column.
+   */
+  providerLabel: string;
   /** Slug we put on the wire in body.model. Provider-native. */
   wireSlug: string;
   /**
    * Canonical slug for LaneSpec.modelSlug — used by judge/DB/reporting for
    * cross-lane aggregation. For OR routes: the OR slug (already canonical).
-   * For others: `${providerSlug}::${wireSlug}` — provider-scoped so different
-   * providers' identically-named models don't collide in reports.
+   * For others: `${routerSlug}::${wireSlug}` — router-scoped so different
+   * routers' identically-named models don't collide in reports.
    */
   canonicalSlug: string;
-  /** Nice display name — usually the wire slug, or model name if provider exposed one. */
+  /** Model display name — pure, without router/provider suffixes. */
   displayName: string;
   /** $/M input tokens. null if pricing unknown → report renders '—'. */
   inputPrice: number | null;
@@ -43,18 +62,18 @@ export interface Route {
   family: string;
   /**
    * Gateway underlying-provider filter, when this Route pins a specific
-   * upstream provider inside a gateway (OR / Vercel). Absent for direct
-   * providers or "let the gateway pick" routes.
-   *   OR:      variantSlug = the OR provider tag ('baseten/fp8')
-   *            lane.ts sends `provider.order = [variantSlug]`
-   *   Vercel:  variantSlug = the Vercel provider slug ('fireworks')
-   *            lane.ts sends `providerOptions.gateway.only = [variantSlug]`
+   * upstream Provider inside a Router. Absent for direct routes or "let
+   * the gateway auto-pick" routes.
+   *   OpenRouter:  variantSlug = OR provider tag ('baseten/fp8')
+   *                lane.ts sends `provider.order = [variantSlug]`
+   *   Vercel:      variantSlug = Vercel provider slug ('fireworks')
+   *                lane.ts sends `providerOptions.gateway.only = [variantSlug]`
    */
   variantSlug?: string;
-  /** Human-readable variant label ('Baseten (fp8)', 'Morph', ...). Displayed inline with providerDisplayName. */
-  variantLabel?: string;
-  /** Per-variant uptime % (from OR endpoints call). Optional. */
+  /** Optional per-variant uptime % (OR endpoints call reports this). */
   variantUptime?: number | null;
+  /** True when this route pins a specific Provider inside a gateway Router. */
+  isVariant: boolean;
   /** Search-optimized haystack: lowercase concat of every user-visible field. */
   searchText: string;
 }
@@ -92,8 +111,8 @@ export function familyFromSlug(slug: string): string {
   return last.split(/[-_.]/)[0].toLowerCase() || 'other';
 }
 
-const ROUTER_BADGES: Record<string, string> = {
-  openrouter: 'via OR',
+const ROUTER_LABELS: Record<string, string> = {
+  openrouter: 'OpenRouter',
   vercel: 'Vercel',
   bedrock: 'Bedrock',
 };
@@ -124,28 +143,33 @@ export function buildRouteList(
 ): Route[] {
   const routes: Route[] = [];
 
-  // OR routes — one "auto-route" per canonical model, plus N variant routes
-  // per model that has per-endpoint data loaded (populated on demand by
-  // store.loadEndpointsFor).
+  // OR routes — one "auto" catch-all per canonical model, plus N variant
+  // routes per model that has per-endpoint data loaded. When variants are
+  // present the "auto" row is suppressed: it collapses to "let OR pick one
+  // of the routes below" which is redundant next to the concrete choices.
   if (orCatalog) {
     for (const model of orCatalog.models) {
-      routes.push({
-        id: `openrouter::${model.slug}`,
-        providerSlug: 'openrouter',
-        providerDisplayName: ROUTER_BADGES.openrouter,
-        wireSlug: model.slug,
-        canonicalSlug: model.slug,
-        displayName: model.displayName || model.slug,
-        inputPrice: model.inputPrice > 0 ? model.inputPrice : null,
-        outputPrice: model.outputPrice > 0 ? model.outputPrice : null,
-        family: model.family || familyFromSlug(model.slug),
-        searchText: [model.slug, model.displayName, model.family, 'openrouter', 'via OR'].join(' ').toLowerCase(),
-      });
-      // Variant routes for this model, if endpoints are cached.
-      const endpoints = orCatalog.endpointsBySlug?.[model.slug]?.endpoints;
-      if (endpoints && endpoints.length > 0) {
+      const endpoints = orCatalog.endpointsBySlug?.[model.slug]?.endpoints ?? [];
+      const family = model.family || familyFromSlug(model.slug);
+      const displayName = model.displayName || model.slug;
+      if (endpoints.length === 0) {
+        routes.push({
+          id: `openrouter::${model.slug}`,
+          providerSlug: 'openrouter',
+          routerLabel: ROUTER_LABELS.openrouter,
+          providerLabel: '(any)',
+          wireSlug: model.slug,
+          canonicalSlug: model.slug,
+          displayName,
+          inputPrice: model.inputPrice > 0 ? model.inputPrice : null,
+          outputPrice: model.outputPrice > 0 ? model.outputPrice : null,
+          family,
+          isVariant: false,
+          searchText: [model.slug, displayName, family, 'openrouter'].join(' ').toLowerCase(),
+        });
+      } else {
         for (const ep of endpoints) {
-          routes.push(orVariantRoute(model.slug, model.displayName || model.slug, model.family || familyFromSlug(model.slug), ep));
+          routes.push(orVariantRoute(model.slug, displayName, family, ep));
         }
       }
     }
@@ -157,34 +181,43 @@ export function buildRouteList(
     ...ROUTERS.filter((r) => r.status === 'shipped' && r.slug !== 'openrouter').map((r) => r.slug),
     ...DIRECT_PROVIDERS.filter((p) => p.status === 'shipped').map((p) => p.slug),
   ];
-  for (const providerSlug of providerSlugs) {
-    const cat = providerCatalogs[providerSlug];
+  for (const routerSlug of providerSlugs) {
+    const cat = providerCatalogs[routerSlug];
     if (!cat) continue;
-    const providerDisplayName = displayNameFor(providerSlug);
+    const routerLabel = routerLabelFor(routerSlug);
+    const isDirect = routerSlug.startsWith('direct:');
+    // Direct routers are already at leaf (they ARE the provider). Router label
+    // shows 'direct'; Provider label shows the direct provider's display name.
     for (const wireSlug of cat.models_raw) {
-      if (!isRouteRunnable(providerSlug, wireSlug)) continue;
+      if (!isRouteRunnable(routerSlug, wireSlug)) continue;
       const family = familyFromSlug(wireSlug);
-      const priceKey = tryDirectPriceKey(providerSlug, wireSlug);
-      const price = priceKey ? DIRECT_PRICING[providerSlug]?.[priceKey] ?? null : null;
-      routes.push({
-        id: `${providerSlug}::${wireSlug}`,
-        providerSlug,
-        providerDisplayName,
-        wireSlug,
-        canonicalSlug: `${providerSlug}::${wireSlug}`,
-        displayName: wireSlug,
-        inputPrice: price?.input ?? null,
-        outputPrice: price?.output ?? null,
-        family,
-        searchText: [wireSlug, providerDisplayName, family, providerSlug].join(' ').toLowerCase(),
-      });
-      // Vercel variant rows (Fireworks, Morph, etc. underneath the gateway).
-      if (providerSlug === 'vercel') {
-        const endpoints = vercelEndpointsBySlug[wireSlug];
-        if (endpoints && endpoints.length > 0) {
-          for (const ep of endpoints) {
-            routes.push(vercelVariantRoute(wireSlug, family, ep));
-          }
+      const priceKey = tryDirectPriceKey(routerSlug, wireSlug);
+      const price = priceKey ? DIRECT_PRICING[routerSlug]?.[priceKey] ?? null : null;
+      // Vercel: only emit the "auto" row when no per-provider endpoints
+      // are loaded yet. Once endpoints load, users pick variants directly.
+      const vercelEndpoints = routerSlug === 'vercel' ? (vercelEndpointsBySlug[wireSlug] ?? []) : [];
+      const suppressAuto = routerSlug === 'vercel' && vercelEndpoints.length > 0;
+      if (!suppressAuto) {
+        routes.push({
+          id: `${routerSlug}::${wireSlug}`,
+          providerSlug: routerSlug,
+          routerLabel,
+          providerLabel: isDirect
+            ? directProviderLabel(routerSlug)
+            : '(any)',
+          wireSlug,
+          canonicalSlug: `${routerSlug}::${wireSlug}`,
+          displayName: wireSlug,
+          inputPrice: price?.input ?? null,
+          outputPrice: price?.output ?? null,
+          family,
+          isVariant: false,
+          searchText: [wireSlug, routerLabel, family, routerSlug].join(' ').toLowerCase(),
+        });
+      }
+      if (routerSlug === 'vercel' && vercelEndpoints.length > 0) {
+        for (const ep of vercelEndpoints) {
+          routes.push(vercelVariantRoute(wireSlug, family, ep));
         }
       }
     }
@@ -200,13 +233,15 @@ export function buildRouteList(
   return routes;
 }
 
-function displayNameFor(providerSlug: string): string {
-  if (providerSlug in ROUTER_BADGES) return ROUTER_BADGES[providerSlug];
-  if (providerSlug.startsWith('direct:')) {
-    const entry = DIRECT_PROVIDERS.find((p) => p.slug === providerSlug);
-    return entry?.displayName ?? providerSlug.replace(/^direct:/, '');
-  }
-  return providerSlug;
+function routerLabelFor(routerSlug: string): string {
+  if (routerSlug in ROUTER_LABELS) return ROUTER_LABELS[routerSlug];
+  if (routerSlug.startsWith('direct:')) return 'direct';
+  return routerSlug;
+}
+
+function directProviderLabel(routerSlug: string): string {
+  const entry = DIRECT_PROVIDERS.find((p) => p.slug === routerSlug);
+  return entry?.displayName ?? routerSlug.replace(/^direct:/, '');
 }
 
 function orVariantRoute(
@@ -215,40 +250,42 @@ function orVariantRoute(
   family: string,
   endpoint: OrEndpoint,
 ): Route {
-  const label = endpoint.displayName || endpoint.provider;
+  const providerLabel = endpoint.displayName || endpoint.provider;
   return {
     id: `openrouter::${modelSlug}::variant::${endpoint.providerTag}`,
     providerSlug: 'openrouter',
-    providerDisplayName: 'via OR',
+    routerLabel: ROUTER_LABELS.openrouter,
+    providerLabel,
     wireSlug: modelSlug,
     canonicalSlug: modelSlug,
-    displayName: `${displayName}  ↳ ${label}`,
+    displayName,
     inputPrice: endpoint.inputPrice > 0 ? endpoint.inputPrice : null,
     outputPrice: endpoint.outputPrice > 0 ? endpoint.outputPrice : null,
     family,
     variantSlug: endpoint.providerTag,
-    variantLabel: label,
     variantUptime: endpoint.uptimePct30m,
-    searchText: [modelSlug, displayName, family, 'openrouter', 'via OR', endpoint.provider, endpoint.providerTag, label].join(' ').toLowerCase(),
+    isVariant: true,
+    searchText: [modelSlug, displayName, family, 'openrouter', endpoint.provider, endpoint.providerTag, providerLabel].join(' ').toLowerCase(),
   };
 }
 
 function vercelVariantRoute(wireSlug: string, family: string, endpoint: VercelEndpoint): Route {
-  const label = endpoint.displayName || endpoint.providerSlug;
+  const providerLabel = endpoint.displayName || endpoint.providerSlug;
   return {
     id: `vercel::${wireSlug}::variant::${endpoint.providerSlug}`,
     providerSlug: 'vercel',
-    providerDisplayName: 'Vercel',
+    routerLabel: ROUTER_LABELS.vercel,
+    providerLabel,
     wireSlug,
     canonicalSlug: `vercel::${wireSlug}`,
-    displayName: `${wireSlug}  ↳ ${label}`,
+    displayName: wireSlug,
     inputPrice: endpoint.inputPricePerM,
     outputPrice: endpoint.outputPricePerM,
     family,
     variantSlug: endpoint.providerSlug,
-    variantLabel: label,
     variantUptime: endpoint.uptimePct1h,
-    searchText: [wireSlug, family, 'vercel', endpoint.providerSlug, label].join(' ').toLowerCase(),
+    isVariant: true,
+    searchText: [wireSlug, family, 'vercel', endpoint.providerSlug, providerLabel].join(' ').toLowerCase(),
   };
 }
 

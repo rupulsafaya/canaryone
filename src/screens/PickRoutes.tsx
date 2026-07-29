@@ -192,8 +192,9 @@ export function PickRoutes() {
       {/* Column headers */}
       <Box flexShrink={0}>
         <Box width={4}><Text color="magenta" bold>   </Text></Box>
-        <Box width={54}><Text color="magenta" bold>Model</Text></Box>
-        <Box width={18}><Text color="magenta" bold>Provider</Text></Box>
+        <Box width={40}><Text color="magenta" bold>Model</Text></Box>
+        <Box width={22}><Text color="magenta" bold>Provider</Text></Box>
+        <Box width={12}><Text color="magenta" bold>Router</Text></Box>
         <Text color="magenta" bold>$/M in · out</Text>
       </Box>
       <Box flexShrink={0}><Text color="gray" dimColor>{'─'.repeat(115)}</Text></Box>
@@ -215,17 +216,21 @@ export function PickRoutes() {
         const active = i === cursor;
         const picked = pickedRouteIds.has(route.id);
         const check = picked ? '●' : '○';
+        const isDim = route.providerLabel === '(any)';
         return (
           <Box key={route.id} flexShrink={0}>
             <Box width={4}>
               {active ? <Text color="cyan" bold>▸ </Text> : <Text>  </Text>}
               <Text color={picked ? '#22c55e' : '#64748b'}>{check}</Text>
             </Box>
-            <Box width={54}>
-              <Text color={active ? 'white' : familyColor(route.family)} bold={active}>{truncate(route.displayName, 52)}</Text>
+            <Box width={40}>
+              <Text color={active ? 'white' : familyColor(route.family)} bold={active}>{truncate(route.displayName, 38)}</Text>
             </Box>
-            <Box width={18}>
-              <Text color={providerBadgeColor(route.providerSlug)}>{route.providerDisplayName}</Text>
+            <Box width={22}>
+              <Text color={isDim ? 'gray' : '#f472b6'} dimColor={isDim}>{truncate(route.providerLabel, 20)}</Text>
+            </Box>
+            <Box width={12}>
+              <Text color={providerBadgeColor(route.providerSlug)}>{route.routerLabel}</Text>
             </Box>
             <Text color="gray">
               {formatPrice(route.inputPrice)} · {formatPrice(route.outputPrice)}

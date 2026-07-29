@@ -107,7 +107,18 @@ export function Confirm() {
   });
 
   const includedTasks = tasks.filter((t) => t.included);
-  const lanes: { model: string; dest: string; router: string; inputPrice: number; outputPrice: number; providerDisplay: string; family: string }[] = [];
+  interface Lane {
+    model: string;
+    dest: string;
+    router: string;
+    routerLabel: string;
+    providerLabel: string;
+    inputPrice: number;
+    outputPrice: number;
+    family: string;
+    modelDisplay: string;
+  }
+  const lanes: Lane[] = [];
 
   // Route-first path (search UI). Falls through to legacy models × destinations
   // only when the user has zero route picks (e.g. arrived via --start pickModels).
@@ -117,10 +128,12 @@ export function Confirm() {
         model: r.wireSlug,
         dest: r.providerSlug,
         router: r.providerSlug.startsWith('direct:') ? 'direct' : r.providerSlug,
+        routerLabel: r.routerLabel,
+        providerLabel: r.providerLabel,
         inputPrice: r.inputPrice ?? 0,
         outputPrice: r.outputPrice ?? 0,
-        providerDisplay: r.providerDisplayName,
         family: r.family,
+        modelDisplay: r.displayName,
       });
     }
   } else {
@@ -136,10 +149,12 @@ export function Confirm() {
           model,
           dest: destSlug,
           router: d.router,
+          routerLabel: d.router,
+          providerLabel: d.displayName,
           inputPrice: d.inputPrice,
           outputPrice: d.outputPrice,
-          providerDisplay: d.displayName,
           family,
+          modelDisplay: catalogModel?.displayName ?? model,
         });
       }
     }
@@ -195,25 +210,23 @@ export function Confirm() {
           <Box>
             <Box width={3}><Text color="gray" dimColor>   </Text></Box>
             <Box width={26}><Text color="gray" dimColor bold>Model</Text></Box>
-            <Box width={28}><Text color="gray" dimColor bold>Provider</Text></Box>
+            <Box width={22}><Text color="gray" dimColor bold>Provider</Text></Box>
             <Box width={12}><Text color="gray" dimColor bold>Router</Text></Box>
             <Text color="gray" dimColor bold>$/M in · out</Text>
           </Box>
           {lanes.slice(0, 10).map((l) => {
-            // Prefer OR/fixture display name when available; otherwise show
-            // the wire slug (search-first routes).
-            const catalogModel = orCatalog?.models.find((x) => x.slug === l.model);
-            const fixtureModel = FIXTURE_ALL.find((x) => x.slug === l.model);
-            const displayModel = catalogModel?.displayName ?? fixtureModel?.displayName ?? l.model;
+            const dim = l.providerLabel === '(any)';
             return (
-              <Box key={`${l.model}@${l.dest}`}>
+              <Box key={`${l.model}@${l.dest}::${l.providerLabel}`}>
                 <Box width={3}>
                   <Text> </Text>
                   <Text color={familyColor(l.family)}>● </Text>
                 </Box>
-                <Box width={26}><Text color="white">{truncate(displayModel, 24)}</Text></Box>
-                <Box width={28}><Text color="magenta">{truncate(l.providerDisplay, 26)}</Text></Box>
-                <Box width={12}><Text color={routerColor(l.router)}>{l.router}</Text></Box>
+                <Box width={26}><Text color="white">{truncate(l.modelDisplay, 24)}</Text></Box>
+                <Box width={22}>
+                  <Text color={dim ? 'gray' : '#f472b6'} dimColor={dim}>{truncate(l.providerLabel, 20)}</Text>
+                </Box>
+                <Box width={12}><Text color={routerColor(l.router)}>{truncate(l.routerLabel, 10)}</Text></Box>
                 <Text color="gray">
                   {l.inputPrice > 0 || l.outputPrice > 0
                     ? `$${l.inputPrice.toFixed(2)} · $${l.outputPrice.toFixed(2)}`
