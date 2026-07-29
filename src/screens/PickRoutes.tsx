@@ -26,6 +26,8 @@ export function PickRoutes() {
   const toggleRoutePick = useStore((s) => s.toggleRoutePick);
   const loadEndpointsFor = useStore((s) => s.loadEndpointsFor);
   const endpointStatusBySlug = useStore((s) => s.endpointStatusBySlug);
+  const vercelEndpointsBySlug = useStore((s) => s.vercelEndpointsBySlug);
+  const loadVercelEndpointsFor = useStore((s) => s.loadVercelEndpointsFor);
   const tasks = useStore((s) => s.tasks);
   const repeats = useStore((s) => s.repeats);
   const goTo = useStore((s) => s.goTo);
@@ -65,9 +67,30 @@ export function PickRoutes() {
     return () => clearTimeout(timer);
   }, [orMatches, endpointStatusBySlug, orCatalog, loadEndpointsFor]);
 
+  // Same auto-fetch pattern for Vercel — narrow the filter to ≤5 Vercel
+  // wire slugs and we fetch each model's underlying-provider list.
+  const vercelMatches = useMemo(() => {
+    const cat = providerCatalogs['vercel'];
+    if (!cat) return [] as string[];
+    const q = query.trim().toLowerCase();
+    if (!q || q.length < 2) return [];
+    const tokens = q.split(/\s+/);
+    return cat.models_raw.filter((slug) => {
+      const hay = slug.toLowerCase();
+      return tokens.every((t) => hay.includes(t));
+    });
+  }, [query, providerCatalogs]);
+  useEffect(() => {
+    if (vercelMatches.length === 0 || vercelMatches.length > 5) return;
+    const need = vercelMatches.filter((s) => !(s in vercelEndpointsBySlug));
+    if (need.length === 0) return;
+    const timer = setTimeout(() => { void loadVercelEndpointsFor(need); }, 300);
+    return () => clearTimeout(timer);
+  }, [vercelMatches, vercelEndpointsBySlug, loadVercelEndpointsFor]);
+
   const allRoutes = useMemo(
-    () => buildRouteList(orCatalog, providerCatalogs),
-    [orCatalog, providerCatalogs],
+    () => buildRouteList(orCatalog, providerCatalogs, vercelEndpointsBySlug),
+    [orCatalog, providerCatalogs, vercelEndpointsBySlug],
   );
   const filtered = useMemo(() => filterRoutes(allRoutes, query), [allRoutes, query]);
 

@@ -168,16 +168,28 @@ async function handleChatCompletions(
     return;
   }
 
-  // Rewrite: model (per-provider wire slug) + provider.order (OR only).
+  // Rewrite: model (per-provider wire slug) + gateway routing hints (varies
+  // by router). Both OR and Vercel accept an underlying-provider filter but
+  // in different fields — direct providers ignore both.
   const rewritten: Record<string, unknown> = {
     ...inbound,
     model: cfg.modelSlugForForward,
     stream: false,   // M1 forces non-streaming; streaming lands in D4.
   };
-  // provider.order is OpenRouter routing metadata — direct/vercel/cloudflare
-  // don't accept it and would 400. Only add for the OR router.
   if (cfg.router === 'openrouter' && cfg.providerTag) {
     rewritten.provider = { order: [cfg.providerTag] };
+  } else if (cfg.router === 'vercel' && cfg.providerTag) {
+    // Vercel AI Gateway uses providerOptions.gateway.only to pin a specific
+    // underlying provider. See:
+    // https://vercel.com/docs/ai-gateway/models-and-providers/provider-filtering-and-ordering
+    const existing = (inbound as Record<string, unknown>).providerOptions;
+    const base = existing && typeof existing === 'object' ? { ...(existing as Record<string, unknown>) } : {};
+    const gateway = base.gateway && typeof base.gateway === 'object'
+      ? { ...(base.gateway as Record<string, unknown>) }
+      : {};
+    gateway.only = [cfg.providerTag];
+    base.gateway = gateway;
+    rewritten.providerOptions = base;
   }
 
   // Log the request (pre-forward).

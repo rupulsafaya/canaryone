@@ -9,6 +9,7 @@ import { getProvider, resolveUrlTemplate, readEnv, DIRECT_PRICING } from '../pro
 import { loadCatalogs, type ProviderCatalogs } from '../scan/provider-catalog.js';
 import { loadRoutePicks, saveRoutePicks } from '../scan/route-picks.js';
 import { buildRouteList, type Route } from '../data/route-index.js';
+import { fetchVercelEndpoints, type VercelEndpoint } from '../scan/vercel-endpoints.js';
 import { runMethodology, isMethodologyFresh } from '../scan/methodology.js';
 import { RunEngine, type LaneSpec, type TaskSpec, type RunSpec } from '../runner/orchestrator.js';
 import type { CellState as EngineCellState, CellUpdate, StepUpdate, SessionKey } from '../runner/event-bus.js';
@@ -59,6 +60,12 @@ type State = {
    */
   providerCatalogs: ProviderCatalogs;
   /**
+   * Vercel Gateway per-model endpoint lists (Fireworks, Morph, ...). Fetched
+   * on demand when PickRoutes narrows to a Vercel model, cached in memory
+   * only — Vercel's endpoints call is cheap and public.
+   */
+  vercelEndpointsBySlug: Record<string, VercelEndpoint[]>;
+  /**
    * Search-first route picks (persist across sessions in ~/.c1/picks.json).
    * Replaces selectedModels + selectedDestinations for the default flow.
    * Each route id = `${providerSlug}::${wireSlug}`.
@@ -103,6 +110,7 @@ type State = {
   loadCatalog: (force?: boolean) => Promise<void>;
   loadProviderCatalogs: () => Promise<void>;
   refreshProviderCatalog: (providerSlug: string, token: string | null) => Promise<void>;
+  loadVercelEndpointsFor: (wireSlugs: string[]) => Promise<void>;
   loadRoutePicks: () => Promise<void>;
   toggleRoutePick: (routeId: string) => Promise<void>;
   clearRoutePicks: () => Promise<void>;
@@ -259,6 +267,7 @@ export const useStore = create<State>((set, get) => ({
   orCatalogStatus: 'idle',
   orCatalogError: null,
   providerCatalogs: {},
+  vercelEndpointsBySlug: {},
   pickedRouteIds: new Set<string>(),
   endpointStatusBySlug: {},
   endpointErrorBySlug: {},
@@ -349,6 +358,24 @@ export const useStore = create<State>((set, get) => ({
     const cats = await loadCatalogs();
     set({ providerCatalogs: cats });
   },
+  loadVercelEndpointsFor: async (wireSlugs: string[]) => {
+    const have = get().vercelEndpointsBySlug;
+    const need = wireSlugs.filter((s) => !(s in have));
+    if (need.length === 0) return;
+    // Fetch in parallel; ignore per-slug failures so one bad model doesn't
+    // block the rest.
+    const results = await Promise.all(need.map(async (slug) => {
+      try {
+        const endpoints = await fetchVercelEndpoints(slug);
+        return [slug, endpoints] as const;
+      } catch {
+        return [slug, [] as VercelEndpoint[]] as const;
+      }
+    }));
+    const patch: Record<string, VercelEndpoint[]> = {};
+    for (const [slug, endpoints] of results) patch[slug] = endpoints;
+    set((s) => ({ vercelEndpointsBySlug: { ...s.vercelEndpointsBySlug, ...patch } }));
+  },
   loadRoutePicks: async () => {
     const p = await loadRoutePicks();
     set({ pickedRouteIds: new Set(p.picked) });
@@ -366,7 +393,7 @@ export const useStore = create<State>((set, get) => ({
   },
   pickedRoutes: (): Route[] => {
     const s = get();
-    const all = buildRouteList(s.orCatalog, s.providerCatalogs);
+    const all = buildRouteList(s.orCatalog, s.providerCatalogs, s.vercelEndpointsBySlug);
     const picked = s.pickedRouteIds;
     return all.filter((r) => picked.has(r.id));
   },

@@ -14,6 +14,7 @@
 
 import type { OrCatalog, OrEndpoint } from './schema.js';
 import type { ProviderCatalogs } from '../scan/provider-catalog.js';
+import type { VercelEndpoint } from '../scan/vercel-endpoints.js';
 import { ROUTERS, DIRECT_PROVIDERS, DIRECT_PRICING } from '../proxy/providers.js';
 
 export interface Route {
@@ -116,7 +117,11 @@ function isRouteRunnable(providerSlug: string, wireSlug: string): boolean {
  * on mount and any time a catalog changes. O(total-model-count) — 500-1000
  * entries typical, cheap to rebuild.
  */
-export function buildRouteList(orCatalog: OrCatalog | null, providerCatalogs: ProviderCatalogs): Route[] {
+export function buildRouteList(
+  orCatalog: OrCatalog | null,
+  providerCatalogs: ProviderCatalogs,
+  vercelEndpointsBySlug: Record<string, VercelEndpoint[]> = {},
+): Route[] {
   const routes: Route[] = [];
 
   // OR routes — one "auto-route" per canonical model, plus N variant routes
@@ -173,6 +178,15 @@ export function buildRouteList(orCatalog: OrCatalog | null, providerCatalogs: Pr
         family,
         searchText: [wireSlug, providerDisplayName, family, providerSlug].join(' ').toLowerCase(),
       });
+      // Vercel variant rows (Fireworks, Morph, etc. underneath the gateway).
+      if (providerSlug === 'vercel') {
+        const endpoints = vercelEndpointsBySlug[wireSlug];
+        if (endpoints && endpoints.length > 0) {
+          for (const ep of endpoints) {
+            routes.push(vercelVariantRoute(wireSlug, family, ep));
+          }
+        }
+      }
     }
   }
 
@@ -216,6 +230,25 @@ function orVariantRoute(
     variantLabel: label,
     variantUptime: endpoint.uptimePct30m,
     searchText: [modelSlug, displayName, family, 'openrouter', 'via OR', endpoint.provider, endpoint.providerTag, label].join(' ').toLowerCase(),
+  };
+}
+
+function vercelVariantRoute(wireSlug: string, family: string, endpoint: VercelEndpoint): Route {
+  const label = endpoint.displayName || endpoint.providerSlug;
+  return {
+    id: `vercel::${wireSlug}::variant::${endpoint.providerSlug}`,
+    providerSlug: 'vercel',
+    providerDisplayName: 'Vercel',
+    wireSlug,
+    canonicalSlug: `vercel::${wireSlug}`,
+    displayName: `${wireSlug}  ↳ ${label}`,
+    inputPrice: endpoint.inputPricePerM,
+    outputPrice: endpoint.outputPricePerM,
+    family,
+    variantSlug: endpoint.providerSlug,
+    variantLabel: label,
+    variantUptime: endpoint.uptimePct1h,
+    searchText: [wireSlug, family, 'vercel', endpoint.providerSlug, label].join(' ').toLowerCase(),
   };
 }
 
