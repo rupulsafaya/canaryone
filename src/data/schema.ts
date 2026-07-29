@@ -53,6 +53,9 @@ export const ConfigSchema = z.object({
       bullets: z.array(z.string()),
       usesLLM: z.boolean().optional(),
       llmEvidence: z.string().optional(),
+      // Content-hash cache key. Optional for backward-compat with pre-existing
+      // caches that only carried mtimeMs — those migrate inline on next read.
+      contentHash: z.string().optional(),
       mtimeMs: z.number(),
       generatedAt: z.string(),
       model: z.string(),

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { Config } from '../data/schema.js';
 import type { MatchedFile } from './glob.js';
 import { detectOrKey } from './orchestrator.js';
@@ -13,7 +14,15 @@ export interface Summary {
   bullets: string[];
   usesLLM?: boolean;
   llmEvidence?: string;
-  mtimeMs: number;
+  /**
+   * SHA-1 hex (first 16 chars) of the first MAX_BYTES_PER_FILE bytes of
+   * the test file content. Used as the primary cache key — stable across
+   * `git worktree add` / fresh clones / file-copy operations, which all
+   * reset mtimeMs. Falls back to mtimeMs comparison for pre-existing
+   * caches that don't have contentHash yet.
+   */
+  contentHash?: string;
+  mtimeMs: number;              // retained for backward compat + debugging
   generatedAt: string;
   model: string;
 }
@@ -63,38 +72,47 @@ export async function summarizeTests(opts: SummarizeOpts): Promise<{
   const results: SummarizeItemResult[] = [];
 
   // Determine which files need (re)summarization.
-  const toProcess: { file: MatchedFile; mtimeMs: number; index: number }[] = [];
+  // Cache-hit rule (new-style): content hashes match → skip Haiku regardless of mtime.
+  // Fallback (legacy caches without contentHash): mtimeMs match.
+  const toProcess: { file: MatchedFile; mtimeMs: number; content: string; contentHash: string; index: number }[] = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     let mtimeMs = 0;
     try { const st = await fs.stat(f.absolute); mtimeMs = st.mtimeMs; } catch { /* ignore */ }
+    let content = '';
+    let contentHash = '';
+    try {
+      content = await readCapped(f.absolute, MAX_BYTES_PER_FILE);
+      contentHash = createHash('sha1').update(content).digest('hex').slice(0, 16);
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      results.push({ file: f.relative, ok: false, error: `read: ${err}` });
+      onProgress?.({ file: f.relative, index: i, total: files.length, status: 'error', error: err });
+      continue;
+    }
+
     const cached = existing[f.relative];
-    // Invalidate when file mtime changed OR when cache predates the usesLLM
-    // classification field (older schema — needs re-read to populate).
-    const cacheFresh = cached && cached.mtimeMs === mtimeMs && typeof cached.usesLLM === 'boolean';
-    if (cacheFresh) {
-      results.push({ file: f.relative, ok: true, summary: cached });
+    const hasNewKey = cached && typeof cached.contentHash === 'string' && cached.contentHash.length > 0;
+    const hashHit = hasNewKey && cached!.contentHash === contentHash && typeof cached!.usesLLM === 'boolean';
+    const mtimeHit = !hasNewKey && cached && cached.mtimeMs === mtimeMs && typeof cached.usesLLM === 'boolean';
+
+    if (hashHit || mtimeHit) {
+      // Migrate legacy caches inline: rewrite with a contentHash so the next
+      // run doesn't fall through to mtime again (fresh clones/worktrees).
+      const migrated: Summary = { ...cached!, contentHash, mtimeMs };
+      summaries[f.relative] = migrated;
+      results.push({ file: f.relative, ok: true, summary: migrated });
       onProgress?.({ file: f.relative, index: i, total: files.length, status: 'cached' });
       continue;
     }
-    toProcess.push({ file: f, mtimeMs, index: i });
+    toProcess.push({ file: f, mtimeMs, content, contentHash, index: i });
   }
 
   let cursor = 0;
   async function worker() {
     while (cursor < toProcess.length) {
       const idx = cursor++;
-      const { file, mtimeMs, index } = toProcess[idx];
-      onProgress?.({ file: file.relative, index, total: files.length, status: 'reading' });
-      let content: string;
-      try {
-        content = await readCapped(file.absolute, MAX_BYTES_PER_FILE);
-      } catch (e) {
-        const err = e instanceof Error ? e.message : String(e);
-        results.push({ file: file.relative, ok: false, error: `read: ${err}` });
-        onProgress?.({ file: file.relative, index, total: files.length, status: 'error', error: err });
-        continue;
-      }
+      const { file, mtimeMs, content, contentHash, index } = toProcess[idx];
       onProgress?.({ file: file.relative, index, total: files.length, status: 'calling' });
       try {
         const parsed = await callHaikuJson(orKey, file.relative, content);
@@ -103,6 +121,7 @@ export async function summarizeTests(opts: SummarizeOpts): Promise<{
           bullets: parsed.bullets,
           usesLLM: parsed.usesLLM,
           llmEvidence: parsed.llmEvidence,
+          contentHash,
           mtimeMs,
           generatedAt: new Date().toISOString(),
           model: SUMMARY_MODEL,
@@ -202,6 +221,10 @@ function extractJson(text: string): any | null {
 }
 
 export function areAllCached(files: MatchedFile[], summaries: SummariesMap | undefined, mtimes: Record<string, number>): boolean {
+  // Kept for callsites that only have mtimes. Content-hash cache-hit is checked
+  // inside summarizeTests() during the read pass — this cheap sniff just avoids
+  // an obvious re-summarize when nothing changed by mtime. Content-hash logic
+  // still catches the case where mtime changed but content didn't.
   if (!summaries) return false;
   return files.every((f) => {
     const s = summaries[f.relative];
