@@ -203,6 +203,18 @@ export const DIRECT_PROVIDERS: DirectEntry[] = [
   },
   {
     kind: 'direct',
+    slug: 'direct:baseten',
+    displayName: 'Baseten',
+    status: 'shipped',
+    primaryEnv: 'BASETEN_API_KEY',
+    extraEnvs: [],
+    forwardUrl: 'https://inference.baseten.co/v1/chat/completions',
+    validationUrlTemplate: 'https://inference.baseten.co/v1/models',
+    catalogUrlTemplate: 'https://inference.baseten.co/v1/models',
+    catalogNeedsAuth: true,
+  },
+  {
+    kind: 'direct',
     slug: 'direct:cerebras',
     displayName: 'Cerebras',
     status: 'shipped',
@@ -250,6 +262,13 @@ export const DIRECT_PRICING: Record<string, Record<string, DirectPrice>> = {
   },
   'direct:together': {
     'moonshotai/kimi-k3': { input: 3.00, output: 15.00 },        // matches OR Together endpoint
+    'z-ai/glm-5.2': { input: 1.40, output: 4.40 },
+  },
+  // Baseten's slugs on the shared inference endpoint match OR canonical form
+  // (moonshotai/Kimi-K3 etc.). Standard-tier pricing per baseten.co/pricing +
+  // cross-verified against OR's Baseten fp8 endpoint.
+  'direct:baseten': {
+    'moonshotai/kimi-k3': { input: 3.00, output: 15.00 },
     'z-ai/glm-5.2': { input: 1.40, output: 4.40 },
   },
   'direct:groq': {},

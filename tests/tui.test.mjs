@@ -379,8 +379,8 @@ tests.push(['L. MethodologyCheck: hardcoded fixture blocks with file/line + sugg
   });
 }]);
 
-// --- Scenario N: ApiKeys screen renders 3 routers + 7 direct providers ---
-tests.push(['N. ApiKeys: 3 routers + 7 direct providers render in two groups', async () => {
+// --- Scenario N: ApiKeys screen renders 3 routers + 8 direct providers ---
+tests.push(['N. ApiKeys: 3 routers + 8 direct providers render in two groups', async () => {
   const hadBackup = await backupHomeEnv();
   try {
     await withScratchDir(async (scratchDir) => {
@@ -395,11 +395,12 @@ tests.push(['N. ApiKeys: 3 routers + 7 direct providers render in two groups', a
         await t.waitFor('Vercel', 3000);
         await t.waitFor(/AWS Bedrock/, 3000);
 
-        // All 7 direct-provider rows (moonshot intl+cn collapse into one).
+        // All 8 direct-provider rows (moonshot intl+cn collapse into one).
         await t.waitFor(/Moonshot \(intl \+ cn\)/, 3000);
         await t.waitFor('Nebius', 3000);
         await t.waitFor('Fireworks', 3000);
         await t.waitFor('Together', 3000);
+        await t.waitFor('Baseten', 3000);
         await t.waitFor('Groq', 3000);
         await t.waitFor('DeepSeek', 3000);
         await t.waitFor('Cerebras', 3000);

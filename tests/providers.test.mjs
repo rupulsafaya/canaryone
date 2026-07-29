@@ -23,7 +23,7 @@ async function main() {
   const routerCount = all.filter((p) => p.kind === 'router').length;
   const directCount = all.filter((p) => p.kind === 'direct').length;
   assert(routerCount === 3, `expected 3 routers, got ${routerCount}`);
-  assert(directCount === 8, `expected 8 direct providers, got ${directCount}`);
+  assert(directCount === 9, `expected 9 direct providers, got ${directCount}`);
 
   // ---------- getProvider — router variants ----------
   const or1 = providers.getProvider('openrouter');
