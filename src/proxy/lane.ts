@@ -28,6 +28,13 @@ export interface LaneConfig {
   endpoint: OrEndpoint | null;          // preferred pricing source (per-provider)
   fallbackModelPrice: { input: number; output: number } | null;  // model-level $/M from OR catalog; used when endpoint is null
   orKey: string;
+  /**
+   * Called after each successful chat/completions response with per-request
+   * deltas. Used by the orchestrator to emit session:step so LiveProgress
+   * can show live token / cost / step counts instead of waiting until the
+   * session ends. Errors during forward (setup, timeout) do NOT fire.
+   */
+  onStep?: (delta: { stepIx: number; inputTokens: number; outputTokens: number; costUsd: number; latencyMs: number }) => void;
 }
 
 export interface LaneServer {
@@ -262,6 +269,12 @@ async function handleChatCompletions(
     traffic_log_length: (respRecord.offset - reqRecord.offset) + respRecord.length,
     failure_class: orResp.ok ? null : classifyOrFailure(orResp.status),
   });
+
+  // Notify the orchestrator so LiveProgress can update in-run.
+  // Values are per-request deltas; the store accumulates them.
+  try {
+    cfg.onStep?.({ stepIx, inputTokens, outputTokens, costUsd: cost, latencyMs: latency });
+  } catch { /* subscriber errors don't break the proxy */ }
 
   // Passthrough response verbatim to the SDK client.
   res.writeHead(orResp.status, { 'content-type': orResp.headers.get('content-type') ?? 'application/json' });

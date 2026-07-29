@@ -266,6 +266,16 @@ export class RunEngine {
           endpoint: s.lane.endpoint,
           fallbackModelPrice: s.lane.fallbackModelPrice,
           orKey: spec.orKey,
+          onStep: (delta) => {
+            this.bus.emit('session:step', {
+              key: sessionKey(s),
+              stepIx: delta.stepIx,
+              inputTokens: delta.inputTokens,
+              outputTokens: delta.outputTokens,
+              costUsd: delta.costUsd,
+              latencyMs: delta.latencyMs,
+            });
+          },
         },
         log, db,
       );

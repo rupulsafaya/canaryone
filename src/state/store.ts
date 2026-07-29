@@ -7,7 +7,7 @@ import { loadOrCatalog, fetchModelEndpoints, readCachedEndpoints } from '../scan
 import { detectOrKey, writeConfig } from './../scan/orchestrator.js';
 import { runMethodology, isMethodologyFresh } from '../scan/methodology.js';
 import { RunEngine, type LaneSpec, type TaskSpec, type RunSpec } from '../runner/orchestrator.js';
-import type { CellState as EngineCellState, CellUpdate } from '../runner/event-bus.js';
+import type { CellState as EngineCellState, CellUpdate, StepUpdate } from '../runner/event-bus.js';
 import { randomUUID } from 'node:crypto';
 
 export type CatalogStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -399,6 +399,10 @@ export const useStore = create<State>((set, get) => ({
     engine.bus.on('session:running', (u) => applyCellUpdate(u));
     engine.bus.on('session:complete', (u) => applyCellUpdate(u));
     engine.bus.on('session:failed', (u) => applyCellUpdate(u));
+    // Live per-request updates so the subtitle ($ / tokens) advances during
+    // a run instead of jumping only when a session completes. session:step
+    // deltas are additive; state changes stay on the session:* events.
+    engine.bus.on('session:step', (u) => applyStepUpdate(u));
     // 'run:sessionsComplete' fires as soon as all runOne workers exit; the
     // judge pool may still be draining in the background. Flip the visible
     // state now so the title doesn't sit on "Running" for the judge tail.
@@ -476,12 +480,30 @@ function applyCellUpdate(u: CellUpdate): void {
     // Count a session in `attempted` only when it reaches a terminal state
     // (a running update is transitional and shouldn't inflate the count).
     const isTerminal = u.state === 'passed' || u.state === 'failed' || u.state === 'error' || u.state === 'aborted';
+    // Cost/tokens are handled by applyStepUpdate on each request. For
+    // sessions that never got a step (setup errors), u.costUsd is 0 anyway,
+    // so we can safely NOT add cost/tokens here.
     laneCells[u.key.taskId] = {
       state,
-      costUsd: prev.costUsd + u.costUsd,
+      costUsd: prev.costUsd,
       latencyMs: Math.max(prev.latencyMs, u.latencyMs),
       passed:    prev.passed    + (u.state === 'passed' ? 1 : 0),
       attempted: prev.attempted + (isTerminal ? 1 : 0),
+    };
+    nextCells[u.key.laneKey] = laneCells;
+    return { cells: nextCells };
+  });
+}
+
+function applyStepUpdate(u: StepUpdate): void {
+  useStore.setState((s) => {
+    const nextCells = { ...s.cells };
+    const laneCells = { ...(nextCells[u.key.laneKey] ?? {}) };
+    const prev = laneCells[u.key.taskId] ?? { state: 'running', costUsd: 0, latencyMs: 0, passed: 0, attempted: 0 };
+    laneCells[u.key.taskId] = {
+      ...prev,
+      costUsd: prev.costUsd + u.costUsd,
+      latencyMs: Math.max(prev.latencyMs, u.latencyMs),
     };
     nextCells[u.key.laneKey] = laneCells;
     return {
