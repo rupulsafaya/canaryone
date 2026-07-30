@@ -1,7 +1,7 @@
 {
   "name": "canaryone",
   "version": "0.0.1-mock.0",
-  "description": "Local agent-testing CLI. TUI mock build.",
+  "description": "Route your test suite through every AI provider hosting your model; compare cost-per-passing-outcome and trajectory quality locally.",
   "type": "module",
   "bin": {
     "c1": "./bin/c1.mjs"
