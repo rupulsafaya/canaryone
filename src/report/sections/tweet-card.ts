@@ -130,17 +130,23 @@ export function renderTweetCard(data: RunData): string {
     --line: #232333;
     --muted: #8b8b9e;
     --text: #e8e8f0;
-    --accent: #f472b6;
+    --accent: #EAB308;
     --good: #22c55e;
     --warn: #eab308;
     --bad: #ef4444;
     --bar-track: #232333;
-    --bar-fill: rgba(244, 114, 182, 0.35);
-    --bar-median: #f472b6;
+    --bar-fill: rgba(234, 179, 8, 0.28);
+    --bar-median: #EAB308;
     --dir: #a78bfa;
     --or: #22d3ee;
     --vercel: #60a5fa;
     --bedrock: #f97316;
+    /* Per-provider brand-ish colors so each row is visually distinct
+       without needing to bundle actual logo assets. */
+    --brand-baseten: #7C3AED;
+    --brand-fireworks: #F97316;
+    --brand-nebius: #10B981;
+    --brand-moonshot: #06B6D4;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif; }
@@ -157,8 +163,9 @@ export function renderTweetCard(data: RunData): string {
   header { padding-bottom: 20px; border-bottom: 1px solid var(--line); }
   .brand { color: var(--muted); font-size: 13px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 4px; }
   .brand strong { color: var(--accent); letter-spacing: 0; text-transform: none; font-weight: 700; font-size: 22px; margin-right: 8px; }
-  h1 { margin: 0 0 4px 0; font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; }
+  h1 { margin: 8px 0 4px 0; font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; }
   .sub { color: var(--muted); font-size: 15px; font-weight: 400; }
+  .tagline-lead { color: var(--text); font-size: 14px; line-height: 1.5; margin: 4px 0 12px; opacity: 0.85; }
 
   table.grid { width: 100%; border-collapse: collapse; margin: 24px 0; }
   table.grid th {
@@ -172,19 +179,24 @@ export function renderTweetCard(data: RunData): string {
   table.grid tr:last-child td { border-bottom: none; }
 
   .provider-cell { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; }
-  .provider-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dir); flex-shrink: 0; }
-  .provider-dot.direct { background: var(--dir); }
-  .provider-dot.openrouter { background: var(--or); }
-  .provider-dot.vercel { background: var(--vercel); }
-  .provider-dot.bedrock { background: var(--bedrock); }
+  .provider-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dir); flex-shrink: 0; box-shadow: 0 0 8px currentColor; }
+  .provider-dot.direct { background: var(--dir); color: var(--dir); }
+  .provider-dot.openrouter { background: var(--or); color: var(--or); }
+  .provider-dot.vercel { background: var(--vercel); color: var(--vercel); }
+  .provider-dot.bedrock { background: var(--bedrock); color: var(--bedrock); }
+  .provider-dot.brand-baseten { background: var(--brand-baseten); color: var(--brand-baseten); }
+  .provider-dot.brand-fireworks { background: var(--brand-fireworks); color: var(--brand-fireworks); }
+  .provider-dot.brand-nebius { background: var(--brand-nebius); color: var(--brand-nebius); }
+  .provider-dot.brand-moonshot { background: var(--brand-moonshot); color: var(--brand-moonshot); }
   .router-tag { font-size: 11px; color: var(--muted); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; margin-left: 4px; }
 
   .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
   .cost-med { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; text-align: right; }
   .pass { text-align: right; font-size: 15px; font-weight: 600; color: var(--good); }
   .pass.warn { color: var(--warn); }
-  .judge { text-align: right; font-size: 15px; font-weight: 600; color: var(--text); }
+  .judge { text-align: right; font-size: 15px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
   .judge .low { color: var(--warn); }
+  .judge .quality-max { color: var(--muted); font-size: 11px; font-weight: 500; letter-spacing: 0.02em; }
 
   .bar-cell { width: 320px; padding-right: 24px; }
   .bar-container {
@@ -224,19 +236,20 @@ export function renderTweetCard(data: RunData): string {
 <body>
 <main>
   <header>
-    <div class="brand"><strong>canaryone</strong> · run report</div>
+    <div class="brand"><strong>canaryone</strong></div>
+    <p class="tagline-lead">Compare AI providers on your own test suite.<br/>Same model, same tests, real cost per pass.</p>
     <h1>${escapeHtml(modelDisplay)}</h1>
-    <div class="sub">${provCount} providers · ${repeatsPerLane || '?'} identical requests each</div>
+    <div class="sub">${provCount} providers · same test file, ${repeatsPerLane || '?'} test runs each</div>
   </header>
 
   <table class="grid">
     <thead>
       <tr>
         <th>Provider</th>
-        <th class="num" style="width:80px">Pass</th>
-        <th class="num" style="width:110px">Median $/pass</th>
-        <th class="bar-cell">Distribution across repeats</th>
-        <th class="num" style="width:70px">Judge</th>
+        <th class="num" style="width:100px">Tests passed</th>
+        <th class="num" style="width:120px">Cost / test</th>
+        <th class="bar-cell">Cost distribution across ${repeatsPerLane || 'N'} test runs</th>
+        <th class="num" style="width:100px">Quality</th>
       </tr>
     </thead>
     <tbody>
@@ -252,7 +265,7 @@ ${rowsHtml}
   </footer>
 
   <div class="tagline">
-    <div class="tagline-quote">The route to the model is your bill.</div>
+    <div class="tagline-quote">The provider your app talks to shapes your bill more than the model you picked.</div>
     <div class="tagline-repo">github.com/rupulsafaya/canaryone</div>
   </div>
 </main>
@@ -264,16 +277,14 @@ function renderRow(s: LaneStats, pct: (v: number) => number): string {
   const rangeLeft = pct(s.min);
   const rangeWidth = Math.max(0.5, pct(s.max) - rangeLeft);
   const medianPct = pct(s.median);
-  const dotClass = s.router === 'openrouter' ? 'openrouter'
-    : s.router === 'vercel' ? 'vercel'
-    : s.router === 'bedrock' ? 'bedrock'
-    : 'direct';
+  // Brand-color dot per known provider; fall back to router-type dot.
+  const brand = brandDotClass(s.destSlug, s.router);
   const passWarn = s.passed < s.attempted;
   const judgeLow = s.avgTraj != null && s.avgTraj < 50;
   return `      <tr>
         <td>
           <div class="provider-cell">
-            <span class="provider-dot ${dotClass}"></span>
+            <span class="provider-dot ${brand}"></span>
             <span>${escapeHtml(s.displayName)}</span>
             <span class="router-tag">${escapeHtml(s.routerBadge)}</span>
           </div>
@@ -290,8 +301,21 @@ function renderRow(s: LaneStats, pct: (v: number) => number): string {
             <span>$${s.max.toFixed(3)}</span>
           </div>
         </td>
-        <td class="judge num">${s.avgTraj != null ? `<span class="${judgeLow ? 'low' : ''}">${s.avgTraj}</span>` : '—'}</td>
+        <td class="judge num">${s.avgTraj != null ? `<span class="${judgeLow ? 'low' : ''}">${s.avgTraj} <span class="quality-max">/ 100</span></span>` : '—'}</td>
       </tr>`;
+}
+
+function brandDotClass(destSlug: string, router: string): string {
+  const s = destSlug.toLowerCase();
+  if (s.includes('baseten')) return 'brand-baseten';
+  if (s.includes('fireworks')) return 'brand-fireworks';
+  if (s.includes('nebius')) return 'brand-nebius';
+  if (s.includes('moonshot')) return 'brand-moonshot';
+  // Fallback to router-family color when no brand match.
+  if (router === 'openrouter') return 'openrouter';
+  if (router === 'vercel') return 'vercel';
+  if (router === 'bedrock') return 'bedrock';
+  return 'direct';
 }
 
 function pickModelDisplay(slugs: string[]): string {
@@ -345,7 +369,7 @@ function deriveFindings(stats: LaneStats[]): Finding[] {
   // different outputs" — always true when seed isn't honored and repeats > 1.
   findings.push({
     num: `0 / ${stats.length}`,
-    label: `providers returned reproducible output despite pinning \`seed\` — determinism theater`,
+    label: `providers gave the same answer twice for the same question — even when asked for deterministic output`,
   });
 
   return findings.slice(0, 3);
