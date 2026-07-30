@@ -294,8 +294,8 @@ export function renderTweetCard(data: RunData): string {
       <tr>
         <th style="width:60px"></th>
         <th>Provider</th>
-        <th class="num" style="width:150px">Cost / test</th>
         <th class="bar-cell">Cost distribution across ${repeatsPerLane || 'N'} test runs</th>
+        <th class="num" style="width:150px">Cost / test</th>
         <th class="num" style="width:150px">Response quality</th>
         <th class="num" style="width:110px">Tests passed</th>
       </tr>
@@ -334,7 +334,6 @@ function renderRow(s: LaneStats, rank: number, pct: (v: number) => number, isWin
             <span class="router-tag">${escapeHtml(s.routerBadge)}</span>
           </div>
         </td>
-        <td class="cost-med num">${s.median > 0 ? '$' + s.median.toFixed(3) : '—'}</td>
         <td class="bar-cell">
           <div class="bar-container">
             <div class="bar-range" style="left: ${rangeLeft.toFixed(1)}%; width: ${rangeWidth.toFixed(1)}%;"></div>
@@ -345,6 +344,7 @@ function renderRow(s: LaneStats, rank: number, pct: (v: number) => number, isWin
             <span>$${s.max.toFixed(3)}</span>
           </div>
         </td>
+        <td class="cost-med num">${s.median > 0 ? '$' + s.median.toFixed(3) : '—'}</td>
         <td class="judge num">${s.avgTraj != null ? `<span>${s.avgTraj} <span class="quality-max">/ 100</span></span>` : '—'}</td>
         <td class="pass ${passWarn ? 'warn' : ''} num">${s.passed}/${s.attempted}</td>
       </tr>`;
