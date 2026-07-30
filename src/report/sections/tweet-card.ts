@@ -125,28 +125,19 @@ export function renderTweetCard(data: RunData): string {
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
   :root {
-    --bg: #0b0b12;
-    --panel: #12121c;
-    --line: #232333;
-    --muted: #8b8b9e;
-    --text: #e8e8f0;
+    /* Light theme is default — canary yellow lands strongest on white. */
+    --bg: #ffffff;
+    --panel: #ffffff;
+    --line: #e5e7eb;
+    --muted: #6b7280;
+    --text: #0f172a;
     --accent: #EAB308;
-    --good: #22c55e;
-    --warn: #eab308;
-    --bad: #ef4444;
-    --bar-track: #232333;
-    --bar-fill: rgba(234, 179, 8, 0.28);
+    --good: #16a34a;
+    --warn: #ca8a04;
+    --bad: #dc2626;
+    --bar-track: #f1f5f9;
+    --bar-fill: rgba(234, 179, 8, 0.35);
     --bar-median: #EAB308;
-    --dir: #a78bfa;
-    --or: #22d3ee;
-    --vercel: #60a5fa;
-    --bedrock: #f97316;
-    /* Per-provider brand-ish colors so each row is visually distinct
-       without needing to bundle actual logo assets. */
-    --brand-baseten: #7C3AED;
-    --brand-fireworks: #F97316;
-    --brand-nebius: #10B981;
-    --brand-moonshot: #06B6D4;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif; }
@@ -158,7 +149,7 @@ export function renderTweetCard(data: RunData): string {
     border: 1px solid var(--line);
     border-radius: 14px;
     padding: 32px 36px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    box-shadow: 0 8px 32px rgba(15,23,42,0.08);
   }
   header { padding-bottom: 20px; border-bottom: 1px solid var(--line); }
   .brand { color: var(--muted); font-size: 13px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 4px; }
@@ -179,15 +170,6 @@ export function renderTweetCard(data: RunData): string {
   table.grid tr:last-child td { border-bottom: none; }
 
   .provider-cell { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; }
-  .provider-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dir); flex-shrink: 0; box-shadow: 0 0 8px currentColor; }
-  .provider-dot.direct { background: var(--dir); color: var(--dir); }
-  .provider-dot.openrouter { background: var(--or); color: var(--or); }
-  .provider-dot.vercel { background: var(--vercel); color: var(--vercel); }
-  .provider-dot.bedrock { background: var(--bedrock); color: var(--bedrock); }
-  .provider-dot.brand-baseten { background: var(--brand-baseten); color: var(--brand-baseten); }
-  .provider-dot.brand-fireworks { background: var(--brand-fireworks); color: var(--brand-fireworks); }
-  .provider-dot.brand-nebius { background: var(--brand-nebius); color: var(--brand-nebius); }
-  .provider-dot.brand-moonshot { background: var(--brand-moonshot); color: var(--brand-moonshot); }
   .router-tag { font-size: 11px; color: var(--muted); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; margin-left: 4px; }
 
   .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
@@ -236,7 +218,7 @@ export function renderTweetCard(data: RunData): string {
 <body>
 <main>
   <header>
-    <div class="brand"><strong>canaryone</strong></div>
+    <div class="brand"><strong>Canary1</strong></div>
     <p class="tagline-lead">Compare AI providers on your own test suite.<br/>Same model, same tests, real cost per pass.</p>
     <h1>${escapeHtml(modelDisplay)}</h1>
     <div class="sub">${provCount} providers · same test file, ${repeatsPerLane || '?'} test runs each</div>
@@ -277,14 +259,11 @@ function renderRow(s: LaneStats, pct: (v: number) => number): string {
   const rangeLeft = pct(s.min);
   const rangeWidth = Math.max(0.5, pct(s.max) - rangeLeft);
   const medianPct = pct(s.median);
-  // Brand-color dot per known provider; fall back to router-type dot.
-  const brand = brandDotClass(s.destSlug, s.router);
   const passWarn = s.passed < s.attempted;
   const judgeLow = s.avgTraj != null && s.avgTraj < 50;
   return `      <tr>
         <td>
           <div class="provider-cell">
-            <span class="provider-dot ${brand}"></span>
             <span>${escapeHtml(s.displayName)}</span>
             <span class="router-tag">${escapeHtml(s.routerBadge)}</span>
           </div>
@@ -303,19 +282,6 @@ function renderRow(s: LaneStats, pct: (v: number) => number): string {
         </td>
         <td class="judge num">${s.avgTraj != null ? `<span class="${judgeLow ? 'low' : ''}">${s.avgTraj} <span class="quality-max">/ 100</span></span>` : '—'}</td>
       </tr>`;
-}
-
-function brandDotClass(destSlug: string, router: string): string {
-  const s = destSlug.toLowerCase();
-  if (s.includes('baseten')) return 'brand-baseten';
-  if (s.includes('fireworks')) return 'brand-fireworks';
-  if (s.includes('nebius')) return 'brand-nebius';
-  if (s.includes('moonshot')) return 'brand-moonshot';
-  // Fallback to router-family color when no brand match.
-  if (router === 'openrouter') return 'openrouter';
-  if (router === 'vercel') return 'vercel';
-  if (router === 'bedrock') return 'bedrock';
-  return 'direct';
 }
 
 function pickModelDisplay(slugs: string[]): string {
