@@ -181,10 +181,15 @@ export function renderTweetCard(data: RunData): string {
     box-shadow: 0 12px 48px rgba(15,23,42,0.08);
   }
   header { padding-bottom: 28px; border-bottom: 1px solid var(--line); }
-  .brand { color: var(--accent); font-size: 15px; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 6px; }
-  .tagline-lead { color: var(--text); font-size: 17px; line-height: 1.5; margin: 4px 0 20px; opacity: 0.75; font-weight: 400; max-width: 800px; }
-  h1 { margin: 12px 0 6px 0; font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.03em; }
-  .sub { color: var(--muted); font-size: 17px; font-weight: 400; }
+  .header-row { display: flex; justify-content: space-between; align-items: baseline; gap: 40px; margin-bottom: 12px; }
+  .header-left { min-width: 0; }
+  .header-right { text-align: right; flex-shrink: 0; }
+  h1 { margin: 0; font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.03em; }
+  .brand-lg { color: var(--accent); font-size: 44px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+  .subrow { display: flex; justify-content: space-between; align-items: baseline; gap: 40px; }
+  .context-title { color: var(--text); font-size: 18px; font-weight: 600; margin-top: 8px; letter-spacing: -0.01em; }
+  .context-sub { color: var(--muted); font-size: 16px; font-weight: 400; margin-top: 4px; }
+  .strapline { color: var(--text); font-size: 18px; line-height: 1.4; font-weight: 500; opacity: 0.85; max-width: 480px; margin-top: 8px; text-align: right; }
 
   table.grid { width: 100%; border-collapse: separate; border-spacing: 0; margin: 32px 0; }
   table.grid th {
@@ -261,18 +266,27 @@ export function renderTweetCard(data: RunData): string {
   .finding-num { font-size: 40px; font-weight: 800; color: var(--accent); letter-spacing: -0.03em; line-height: 1; margin-bottom: 10px; font-variant-numeric: tabular-nums; }
   .finding-label { font-size: 15px; color: var(--text); line-height: 1.4; }
 
-  .tagline { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: baseline; }
-  .tagline-quote { font-size: 17px; color: var(--muted); font-style: italic; }
-  .tagline-repo { font-size: 14px; color: var(--accent); font-weight: 600; letter-spacing: 0.01em; }
+  .tagline { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; align-items: baseline; }
+  .tagline-repo { font-size: 15px; color: var(--accent); font-weight: 600; letter-spacing: 0.01em; text-decoration: none; }
+  .tagline-repo:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <div class="brand">Canary1</div>
-    <p class="tagline-lead">Compare AI providers on your own test suite.<br/>Same model, same tests, real cost per pass.</p>
-    <h1>${escapeHtml(modelDisplay)}</h1>
-    <div class="sub">${provCount} providers · same test file, ${repeatsPerLane || '?'} test runs each</div>
+    <div class="header-row">
+      <h1>${escapeHtml(modelDisplay)}</h1>
+      <div class="brand-lg">CanaryOne</div>
+    </div>
+    <div class="subrow">
+      <div class="header-left">
+        <div class="context-title">Cost and Performance</div>
+        <div class="context-sub">${provCount} providers · same test suite · ${repeatsPerLane || '?'} test runs each</div>
+      </div>
+      <div class="header-right">
+        <div class="strapline">Test which AI provider actually delivers on your workload.</div>
+      </div>
+    </div>
   </header>
 
   <table class="grid">
@@ -283,7 +297,7 @@ export function renderTweetCard(data: RunData): string {
         <th class="num" style="width:110px">Tests passed</th>
         <th class="num" style="width:150px">Cost / test</th>
         <th class="bar-cell">Cost distribution across ${repeatsPerLane || 'N'} test runs</th>
-        <th class="num" style="width:110px">Quality</th>
+        <th class="num" style="width:150px">Response quality</th>
       </tr>
     </thead>
     <tbody>
@@ -299,8 +313,7 @@ ${rowsHtml}
   </footer>
 
   <div class="tagline">
-    <div class="tagline-quote">The provider your app talks to shapes your bill more than the model you picked.</div>
-    <div class="tagline-repo">github.com/rupulsafaya/canaryone</div>
+    <a class="tagline-repo" href="https://github.com/rupulsafaya/canaryone">github.com/rupulsafaya/canaryone</a>
   </div>
 </main>
 </body>
