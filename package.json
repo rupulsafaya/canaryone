@@ -1,14 +1,16 @@
 {
   "name": "canaryone",
-  "version": "0.0.1-mock.0",
+  "version": "0.1.0",
   "description": "Route your test suite through every AI provider hosting your model; compare cost-per-passing-outcome and trajectory quality locally.",
   "type": "module",
   "bin": {
-    "c1": "./bin/c1.mjs"
+    "canaryone": "./bin/canaryone.mjs",
+    "c1": "./bin/canaryone.mjs"
   },
   "scripts": {
     "dev": "tsx src/cli.tsx",
-    "build": "tsc",
+    "build": "tsup",
+    "prepublishOnly": "pnpm run build",
     "start": "node dist/cli.js",
     "test:tui": "node tests/tui.test.mjs",
     "test:runner": "tsx tests/runner.test.mjs",
@@ -36,11 +38,13 @@
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "node-pty": "^1.1.0",
+    "tsup": "^8.5.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   },
   "files": [
     "dist",
+    "bin",
     "fixtures"
   ],
   "license": "MIT"

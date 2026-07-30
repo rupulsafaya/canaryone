@@ -24,40 +24,120 @@ Kimi K3        nebius                Vercel       6/12   $0.0472   69 ⚠    $0.
 
 ## Install
 
-Requires **Node ≥ 22**. For now, clone + link locally (npm publish is pending):
+Requires **Node ≥ 22**.
+
+**Try it once (no install):**
 
 ```bash
-git clone https://github.com/rupulsafaya/canaryone.git
-cd canaryone && pnpm install
-npm link                        # exposes `c1` on your PATH
+cd ~/your-repo
+npx canaryone                   # downloads, runs the TUI in ~/your-repo
 ```
 
-Or run directly without linking:
+`npx canaryone` fetches the package from npm on first run, caches it, and boots the TUI targeting the current directory. That single command *is* the launch — there's no separate setup step.
+
+**Install for daily use:**
 
 ```bash
-./bin/c1.mjs                    # from the canaryone/ directory
-pnpm dev                        # runs the TypeScript source via tsx
+npm i -g canaryone              # exposes `canaryone` and `c1` on your PATH
+c1                              # from any repo, boots the TUI
 ```
+
+Both `canaryone` and `c1` resolve to the same binary. Use whichever you prefer.
 
 ## First run (30 seconds)
 
-Point `c1` at any repo whose test suite calls an LLM. The [`canaryone-demo`](https://github.com/rupulsafaya/canaryone-demo) repo is a reference test suite with a 4-tier difficulty ladder if you don't have one handy:
+canaryone runs against **the tests you already have** — the ones that exercise your agent, your prompts, your tools. It finds them for you (see [How canaryone finds your AI-tests](#how-canaryone-finds-your-ai-tests)) and reroutes their LLM calls through every provider you want to compare.
+
+The one requirement: those tests must **actually call an LLM at runtime**. Tests that stub or mock the model won't tell you anything about a provider — canaryone will surface them as "no LLM detected" in the Pick Tasks screen and let you skip them.
+
+Point `canaryone` at your own repo:
+
+```bash
+cd ~/your-repo
+npx canaryone                   # or `c1` if you installed globally
+```
+
+**Want to try it before pointing at your own repo?** [`canaryone-demo`](https://github.com/rupulsafaya/canaryone-demo) is a 4-tier difficulty ladder over a mini SaaS analytics fixture — you can test with this one:
 
 ```bash
 git clone https://github.com/rupulsafaya/canaryone-demo.git
 cd canaryone-demo && pnpm install
-c1                              # point at the current directory
+npx canaryone
 ```
 
 You'll walk through:
 
-1. **API keys** — paste tokens for the providers you want to compare. OpenRouter is required; everything else is optional.
+1. **API keys** — paste tokens for the providers you want to compare. `OPENROUTER_API_KEY` is required (see [Why OpenRouter is required](#why-openrouter-is-required)); everything else is optional.
 2. **Onboarding** — canaryone reads your `package.json` / `pyproject.toml`, finds test files, detects your LLM SDK.
 3. **Methodology check** — the runner env-swaps the LLM base URL, so it needs your target to read that from env (not a hardcoded URL). Fails loud on hardcoded configs.
 4. **Pick routes** — search-first UI over every model your configured providers serve. `kimi k3` shows you Kimi K3 across all 10+ routes it exists on.
 5. **Confirm & run** — **preflight probes** every picked lane with a 1-token request before spending real time on a run. Fails on billing/auth/model-access issues in ~5 seconds.
 6. **Live progress** — see pass/fail per (lane, task) cell in real time.
-7. **HTML report** — cost-per-pass, weighted $/pass, trajectory quality per lane, plus per-session drilldowns.
+7. **HTML report** — cost-per-pass, weighted $/pass, trajectory quality per lane, plus per-session drilldowns. See [Viewing the report](#viewing-the-report).
+
+## How canaryone finds your AI-tests
+
+Two stages, run once per target and cached under `<target>/.c1/`:
+
+1. **Deterministic scan** — `fast-glob` sweeps common test-file locations. It checks shallow directories first (`tests/agent/`, `tests/`, `test/`, `__tests__/`) then falls back to broader patterns for monorepos (`packages/*/tests/**`, `apps/*/tests/**`, `src/**/__tests__/**`). File patterns matched: `**/*.{spec,test}.{ts,tsx,js,mjs,cjs,py}`. Ignores `node_modules`, `dist`, `build`, `.next`, `coverage`, `.venv`.
+2. **LLM summarization** — each matched test file is sent to `anthropic/claude-haiku-4.5` (via OpenRouter) with a prompt that returns: does this test call an LLM? what does it do? what evidence points to LLM use (e.g. imports `@anthropic-ai/sdk`, calls `judgeJob()`)? The output is what you see in the Pick Tasks screen.
+
+The summaries cache to `.c1/scan/` — subsequent runs skip the LLM step unless you pass `--rescan`.
+
+**Methodology detection** (a separate LLM call, same model) reads your source to figure out *how* your app calls its LLM: which SDK, which env var holds the base URL, and whether the URL is hardcoded (which would block canaryone's proxy from routing calls). Bypass its cache with `--rescan-methodology`.
+
+## How your app's LLM calls get routed
+
+canaryone doesn't patch your code. It puts a proxy between your test subprocess and each provider:
+
+1. For every lane you picked, canaryone starts a **local HTTP proxy on an ephemeral port**.
+2. It spawns your test subprocess with `OPENAI_BASE_URL=http://localhost:<port>/v1` (and equivalent env vars for other SDKs it detected).
+3. Your test code calls what it thinks is OpenAI/Anthropic/whatever, but the request hits localhost.
+4. The proxy rewrites `body.model` and any routing headers to target the specific lane (e.g. `openrouter:baseten/fp8`), then forwards to the real provider endpoint.
+5. Every request/response is logged to `<target>/.c1/runs/<runId>/traffic.jsonl` for full audit.
+
+Because the swap is env-only, your test code needs to read its base URL from env (`process.env.OPENAI_BASE_URL`, or whatever env var canaryone detected for your SDK). The **methodology check** fails loud if it finds a hardcoded URL — that's the one config change you need to make in your target repo.
+
+## Why OpenRouter is required
+
+`OPENROUTER_API_KEY` covers three things you can't opt out of:
+
+- **Test summarization** — the scan step calls `anthropic/claude-haiku-4.5` to describe each test file.
+- **Methodology detection** — same model, called once to read your app's LLM plumbing.
+- **Judge** — every session's transcript is scored 0–100 by `anthropic/claude-haiku-4.5` (~$0.005/session). Disable per-run with `--disable-judge` if you only care about pass/fail + cost.
+
+Additionally, OpenRouter is offered as one of the routers you can benchmark against. That part is optional — you can pick zero OR lanes on the Pick Routes screen. The three OR calls above happen regardless of which lanes you pick.
+
+## Viewing the report
+
+At the end of each run, canaryone writes a self-contained HTML report to:
+
+```
+<target>/.c1/runs/<runId>/report/index.html
+```
+
+Open it directly:
+
+```bash
+open .c1/runs/<runId>/report/index.html            # macOS
+xdg-open .c1/runs/<runId>/report/index.html        # Linux
+```
+
+Some browsers (Chrome, notably) restrict `file://` local reads for images/fonts. If the report renders without logos or with broken drilldowns, serve the run directory over HTTP instead:
+
+```bash
+cd .c1/runs/<runId>/report
+python3 -m http.server 8080
+# then open http://localhost:8080
+```
+
+Or with Node:
+
+```bash
+npx serve .c1/runs/<runId>/report
+```
+
+The report is self-contained — copy the whole `report/` directory anywhere (email attachment, S3 bucket, GitHub Pages) and it will still render.
 
 ## What canaryone measures
 
@@ -99,7 +179,6 @@ Everything. `canaryone` runs a local HTTP proxy on an ephemeral port per lane, y
 - **No streaming** on the proxy yet — every lane call is non-streaming. Streaming lands in the next milestone.
 - **Session timeout** hard-coded to 6 minutes per session. Long-agent workloads on slow providers get killed; a `--session-timeout` flag is coming.
 - **Judge** uses Claude Haiku 4.5 via OpenRouter. Costs ~$0.005 per session. Disable with `--disable-judge` if you only care about pass/fail + cost.
-- **npm install** — canaryone isn't yet published to npm as a working package (the `0.0.0` on npm is a deprecated placeholder). For now, clone + `pnpm install` locally.
 
 ## Under the hood
 
@@ -108,11 +187,6 @@ Everything. `canaryone` runs a local HTTP proxy on an ephemeral port per lane, y
 - **SQLite** — every session, step, judge tag, cost row in `<target>/.c1/db.sqlite`. Query it yourself.
 - **HTML report** — auto-generated at end of run under `.c1/runs/<runId>/report/index.html`. Open in browser or serve with `python3 -m http.server`.
 - **Cost accounting** — OpenRouter's `/generation?id=` used for per-request cost on OR lanes (cache-adjusted). Direct providers use hand-seeded prices from `providers.ts::DIRECT_PRICING`. Backfill helper: `node scripts/backfill-cost.mjs <db-path> <runId>`.
-
-## Companion repos
-
-- **[canaryone-demo](https://github.com/rupulsafaya/canaryone-demo)** — reference agent test suite (4-tier difficulty ladder over a mini SaaS analytics fixture). Copy this shape for your own tests.
-- **[canaryone-cloud](https://github.com/rupulsafaya/canaryone-cloud)** — hosted showcase dashboard (feature-frozen companion) at [canaryone-theta.vercel.app](https://canaryone-theta.vercel.app).
 
 ## Contributing
 
