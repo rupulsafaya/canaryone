@@ -18,7 +18,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { getProvider, resolveUrlTemplate } from '../proxy/providers.js';
+import { getProvider, resolveUrlTemplate, ANTHROPIC_API_VERSION } from '../proxy/providers.js';
 
 const HOME_C1_DIR = path.join(os.homedir(), '.c1');
 const CATALOGS_PATH = path.join(HOME_C1_DIR, 'provider-catalogs.json');
@@ -102,7 +102,12 @@ export async function fetchModels(providerSlug: string, token: string | null): P
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (entry.catalogNeedsAuth) {
     if (!token) throw new Error(`catalog for ${providerSlug} requires a token`);
-    headers.Authorization = `Bearer ${token}`;
+    if (entry.kind === 'direct' && entry.catalogAuthKind === 'anthropic') {
+      headers['x-api-key'] = token;
+      headers['anthropic-version'] = ANTHROPIC_API_VERSION;
+    } else {
+      headers.Authorization = `Bearer ${token}`;
+    }
   }
 
   const res = await fetch(url, {

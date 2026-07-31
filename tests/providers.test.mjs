@@ -23,7 +23,39 @@ async function main() {
   const routerCount = all.filter((p) => p.kind === 'router').length;
   const directCount = all.filter((p) => p.kind === 'direct').length;
   assert(routerCount === 3, `expected 3 routers, got ${routerCount}`);
-  assert(directCount === 9, `expected 9 direct providers, got ${directCount}`);
+  assert(directCount === 14, `expected 14 direct providers, got ${directCount}`);
+
+  // ---------- Frontier direct providers (added 2026-07-31) ----------
+  const openai = providers.getProvider('direct:openai');
+  assert(openai?.kind === 'direct' && openai?.primaryEnv === 'OPENAI_API_KEY',
+    'direct:openai resolves with OPENAI_API_KEY');
+  assert(openai?.forwardUrl === 'https://api.openai.com/v1/chat/completions',
+    `direct:openai forward URL wrong: ${openai?.forwardUrl}`);
+
+  const anthropic = providers.getProvider('direct:anthropic');
+  assert(anthropic?.primaryEnv === 'ANTHROPIC_API_KEY',
+    'direct:anthropic resolves with ANTHROPIC_API_KEY');
+  assert(anthropic?.forwardUrl === 'https://api.anthropic.com/v1/chat/completions',
+    `direct:anthropic uses OpenAI-compat endpoint, got ${anthropic?.forwardUrl}`);
+
+  const xai = providers.getProvider('direct:xai');
+  assert(xai?.primaryEnv === 'XAI_API_KEY', 'direct:xai resolves with XAI_API_KEY');
+  assert(xai?.forwardUrl === 'https://api.x.ai/v1/chat/completions',
+    `direct:xai forward URL wrong: ${xai?.forwardUrl}`);
+
+  const gemini = providers.getProvider('direct:google-gemini');
+  assert(gemini?.primaryEnv === 'GOOGLE_API_KEY',
+    'direct:google-gemini resolves with GOOGLE_API_KEY');
+  assert(gemini?.forwardUrl.includes('generativelanguage.googleapis.com/v1beta/openai/chat/completions'),
+    `direct:google-gemini uses OpenAI-compat shim, got ${gemini?.forwardUrl}`);
+
+  const zai = providers.getProvider('direct:zai');
+  assert(zai?.primaryEnv === 'ZAI_API_KEY', 'direct:zai resolves with ZAI_API_KEY');
+  assert(zai?.forwardUrl === 'https://api.z.ai/api/paas/v4/chat/completions',
+    `direct:zai forward URL wrong: ${zai?.forwardUrl}`);
+  const glm52 = providers.DIRECT_PRICING['direct:zai']?.['z-ai/glm-5.2'];
+  assert(glm52?.input === 1.12 && glm52?.output === 3.52,
+    `z-ai glm-5.2 pricing wrong: ${JSON.stringify(glm52)}`);
 
   // ---------- getProvider — router variants ----------
   const or1 = providers.getProvider('openrouter');
@@ -144,6 +176,28 @@ async function main() {
   const fireworksK3 = providers.DIRECT_PRICING['direct:fireworks']?.['moonshotai/kimi-k3'];
   assert(fireworksK3?.input === 3.00 && fireworksK3?.output === 15.00,
     `Fireworks kimi-k3 pricing wrong: ${JSON.stringify(fireworksK3)}`);
+
+  // Frontier direct-provider pricing seeds (2026-07-31). Verified against
+  // provider pricing pages + cross-checked vs OR /api/v1/models — see
+  // docs/compat-matrix-31july.md.
+  const gpt5 = providers.DIRECT_PRICING['direct:openai']?.['openai/gpt-5'];
+  assert(gpt5?.input === 1.25 && gpt5?.output === 10.00,
+    `openai gpt-5 pricing wrong: ${JSON.stringify(gpt5)}`);
+  const opus5 = providers.DIRECT_PRICING['direct:anthropic']?.['anthropic/claude-opus-5'];
+  assert(opus5?.input === 5.00 && opus5?.output === 25.00,
+    `anthropic claude-opus-5 pricing wrong: ${JSON.stringify(opus5)}`);
+  const sonnet5 = providers.DIRECT_PRICING['direct:anthropic']?.['anthropic/claude-sonnet-5'];
+  assert(sonnet5?.input === 2.00 && sonnet5?.output === 10.00,
+    `anthropic claude-sonnet-5 intro pricing wrong: ${JSON.stringify(sonnet5)}`);
+  const dsFlash = providers.DIRECT_PRICING['direct:deepseek']?.['deepseek/deepseek-v4-flash'];
+  assert(dsFlash?.input === 0.14 && dsFlash?.output === 0.28,
+    `deepseek v4-flash pricing wrong: ${JSON.stringify(dsFlash)}`);
+  const grok45 = providers.DIRECT_PRICING['direct:xai']?.['x-ai/grok-4.5'];
+  assert(grok45?.input === 2.00 && grok45?.output === 6.00,
+    `x-ai grok-4.5 pricing wrong: ${JSON.stringify(grok45)}`);
+  const gemini36 = providers.DIRECT_PRICING['direct:google-gemini']?.['google/gemini-3.6-flash'];
+  assert(gemini36?.input === 1.50 && gemini36?.output === 7.50,
+    `google gemini-3.6-flash pricing wrong: ${JSON.stringify(gemini36)}`);
 
   await fs.rm(tmpHome, { recursive: true, force: true });
   console.log('providers.test.mjs — all assertions passed');

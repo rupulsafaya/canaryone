@@ -31,11 +31,22 @@ const PROBE_TIMEOUT_MS = 12_000;
 
 export async function probeLane(lane: LaneSpec): Promise<PreflightResult> {
   const t0 = Date.now();
+  // OpenAI GPT-5 family + o-series reasoning models reject `max_tokens` with
+  // HTTP 400, requiring `max_completion_tokens` instead. GPT-4o family + all
+  // other providers still take `max_tokens`. Detect by model-id prefix and
+  // set the appropriate field; on error, retryOnce below tries the alternate.
+  const model = lane.modelSlugForForward ?? lane.modelSlug;
+  const usesCompletionTokens = /^(gpt-5|o[1-9])(-|$|\.)/i.test(model);
   const body: Record<string, unknown> = {
-    model: lane.modelSlugForForward ?? lane.modelSlug,
-    max_tokens: 1,
+    model,
     messages: [{ role: 'user', content: 'ping' }],
   };
+  // Reasoning models chew through hidden reasoning tokens before producing
+  // output; 1 token isn't enough to reach `finish_reason:'length'` cleanly
+  // and OpenAI returns 400 "max_tokens or model output limit was reached".
+  // 128 is the smallest budget that clears real gpt-5-nano probes at ≈$5e-5.
+  if (usesCompletionTokens) body.max_completion_tokens = 128;
+  else body.max_tokens = 1;
   // Same gateway routing hints lane.ts uses at run time — if a lane will
   // route through OR's provider.order to Baseten at run time, the preflight
   // must too, otherwise the probe passes but the run fails.

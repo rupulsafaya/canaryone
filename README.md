@@ -2,7 +2,7 @@
 
 **Benchmark your AI agent across every provider it could run on — using your own tests.**
 
-`canaryone` reroutes the LLM calls your test suite already makes through 3 routers (OpenRouter, Vercel AI Gateway, AWS Bedrock) and 9 direct providers (Moonshot, Nebius, Fireworks, Together, Baseten, Groq, DeepSeek, Cerebras, and any others you configure), then reports **cost-per-passing-outcome + judged trajectory quality** side by side. No cloud, no account, no data leaves your machine.
+`canaryone` reroutes the LLM calls your test suite already makes through 3 routers (OpenRouter, Vercel AI Gateway, AWS Bedrock) and 14 direct providers (OpenAI, Anthropic, DeepSeek, xAI, Google Gemini, Z.ai, Moonshot, Nebius, Fireworks, Together, Baseten, Groq, Cerebras, and any others you configure), then reports **cost-per-passing-outcome + judged trajectory quality** side by side. No cloud, no account, no data leaves your machine.
 
 ```
 Model          Provider              Router      pass    $/pass    judge   weighted $/pass
@@ -160,9 +160,11 @@ The report's headline metric is **weighted $/pass** = `raw $/pass ÷ (judge / 10
 
 Direct providers (OpenAI-compat endpoints, one lane per provider):
 
-`direct:moonshot-intl`, `direct:moonshot-cn`, `direct:nebius`, `direct:fireworks`, `direct:together`, `direct:baseten`, `direct:groq`, `direct:deepseek`, `direct:cerebras`
+`direct:openai`, `direct:anthropic`, `direct:deepseek`, `direct:xai`, `direct:google-gemini`, `direct:zai`, `direct:moonshot-intl`, `direct:moonshot-cn`, `direct:nebius`, `direct:fireworks`, `direct:together`, `direct:baseten`, `direct:groq`, `direct:cerebras`
 
 Each direct provider ships with its native model catalog. OpenRouter and Vercel additionally expose their underlying host list (Baseten, Fireworks, Morph, Nebius, etc.) as separate variant lanes so you can compare *"the same model on the same underlying host, through two different gateways."*
+
+**Auth notes.** All direct providers accept `Authorization: Bearer <key>` on `/chat/completions`. Anthropic's `/v1/models` catalog probe requires `x-api-key` + `anthropic-version` instead — canaryone handles that automatically via the `catalogAuthKind` field on the registry entry. See [`docs/compat-matrix-31july.md`](./docs/compat-matrix-31july.md) for the live compat verdicts.
 
 ## What's on your machine
 
@@ -175,7 +177,8 @@ Everything. `canaryone` runs a local HTTP proxy on an ephemeral port per lane, y
 ## Rough edges
 
 - **AWS Bedrock** currently only supports gpt-oss models (via Amazon's OpenAI-compat endpoint). Claude / Llama / Mistral on Bedrock need a Converse-API translator that's not yet wired.
-- **Direct-provider pricing** for cost math is hand-seeded (most direct providers don't expose pricing in their APIs). Kimi K3 and GLM 5.2 are covered across all shipped providers; other models fall back to `—` in the cost column and can be added by editing `src/proxy/providers.ts` or via the `scripts/backfill-cost.mjs` helper.
+- **Direct-provider pricing** for cost math is hand-seeded (most direct providers don't expose pricing in their APIs). Kimi K3, GLM 5.2, and 30+ tier-1 models across OpenAI, Anthropic, DeepSeek, xAI, Google Gemini, and Z.ai are seeded and cross-verified against OpenRouter's `/api/v1/models` (which resells at exact provider list price). Other models fall back to `—` in the cost column and can be added by editing `src/proxy/providers.ts` or via the `scripts/backfill-cost.mjs` helper.
+- **GPT-5 family via direct** — canaryone's preflight probes use `max_completion_tokens` for `gpt-5*` / o-series reasoning models, but the request-body rewrite doesn't apply to your target's actual chat calls. If your target app uses `max_tokens` in `openai.chat.completions.create(...)`, GPT-5 lanes will HTTP 400 mid-run. Fix at your target's SDK call site, or route those lanes through `openrouter:openai/gpt-5*` instead of `direct:openai`.
 - **No streaming** on the proxy yet — every lane call is non-streaming. Streaming lands in the next milestone.
 - **Session timeout** hard-coded to 6 minutes per session. Long-agent workloads on slow providers get killed; a `--session-timeout` flag is coming.
 - **Judge** uses Claude Haiku 4.5 via OpenRouter. Costs ~$0.005 per session. Disable with `--disable-judge` if you only care about pass/fail + cost.

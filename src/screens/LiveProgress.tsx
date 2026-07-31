@@ -318,12 +318,12 @@ export function LiveProgress() {
             <Box marginTop={0} flexDirection="column">
               <Box>
                 <Text color="gray">Report: </Text>
-                <Text color="#eab308" bold>{reportPagePath(reportHtmlPath)}</Text>
+                <Text color="#eab308" bold>{`file://${reportPagePath(reportHtmlPath)}`}</Text>
                 <Text color="gray" dimColor>  (new)</Text>
               </Box>
               <Box>
                 <Text color="gray">        </Text>
-                <Text color="#22c55e" bold>{reportHtmlPath}</Text>
+                <Text color="#22c55e" bold>{`file://${reportHtmlPath}`}</Text>
                 <Text color="gray" dimColor>  (index)</Text>
               </Box>
               <Box>
@@ -331,7 +331,9 @@ export function LiveProgress() {
                 <Text color="cyan" bold>enter</Text>
                 <Text color="gray"> or </Text>
                 <Text color="cyan" bold>v</Text>
-                <Text color="gray"> to view report.html in your browser (Cmd+Click paths above).</Text>
+                <Text color="gray"> to view in browser · Cmd+Click any </Text>
+                <Text color="cyan" bold>file://</Text>
+                <Text color="gray"> link above.</Text>
               </Box>
             </Box>
           )}
@@ -343,7 +345,7 @@ export function LiveProgress() {
           )}
           <Box marginTop={1}>
             <Text color="gray">Run dir: </Text>
-            <Text color="cyan">{runDir}</Text>
+            <Text color="cyan">{`file://${runDir}`}</Text>
             <Text color="gray" dimColor>  (press </Text>
             <Text color="cyan">o</Text>
             <Text color="gray" dimColor> to open in Finder)</Text>
@@ -353,7 +355,7 @@ export function LiveProgress() {
           </Box>
           <Box>
             <Text color="gray">SQLite: </Text>
-            <Text color="cyan">{path.join(configDir, 'db.sqlite')}</Text>
+            <Text color="cyan">{`file://${path.join(configDir, 'db.sqlite')}`}</Text>
           </Box>
         </Box>
       )}

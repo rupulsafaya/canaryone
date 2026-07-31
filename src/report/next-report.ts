@@ -41,6 +41,8 @@ const PROVIDER_LOBE_SLUG: Record<string, string> = {
   google:          'gemini',
   'google-gemini': 'gemini',
   groq:            'groq',
+  zai:             'zai',
+  'z-ai':          'zai',
 };
 
 const ROUTER_LOBE_SLUG: Record<string, string> = {
@@ -197,6 +199,8 @@ export function renderNextReport(data: RunData): string {
       <g id="chart-content"></g>
     </svg>
 
+    <div id="chart-tooltip" class="chart-tooltip" aria-hidden="true"></div>
+
     <p class="caption" id="caption"></p>
     <div class="chart-legend" id="chart-legend"></div>
   </div>
@@ -338,6 +342,30 @@ header h1 {
   padding: 24px;
   position: relative;
 }
+/* Custom hover tooltip for dots. SVG native <title> takes ~1s to appear in
+   Chrome, so we render our own HTML tooltip that appears on mouseenter. */
+.chart-tooltip {
+  position: absolute;
+  top: 0; left: 0;
+  pointer-events: none;
+  z-index: 10;
+  background: #0f0f10;
+  color: #f3f4f6;
+  border: 1px solid #262629;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: 11px/1.4 ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate3d(-9999px, -9999px, 0);
+  transition: opacity 90ms ease-out;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+}
+.chart-tooltip.visible { opacity: 1; }
+.chart-tooltip .tt-title { color: #EAB308; font-weight: 600; letter-spacing: 0.2px; }
+.chart-tooltip .tt-line  { color: #d1d5db; }
+.chart-tooltip .tt-num   { color: #f9fafb; }
+.dot-group { cursor: pointer; }
 .tools-row {
   display: flex;
   justify-content: flex-end;
@@ -514,6 +542,36 @@ const SCRIPT = `
   var legend       = document.getElementById('chart-legend');
   var distToggle   = document.getElementById('dist-toggle');
   var exportBtn    = document.getElementById('export-btn');
+  var tooltipEl    = document.getElementById('chart-tooltip');
+
+  // Shared tooltip handlers. drawDot wires each group to these; the tipHtml
+  // string is stashed on the group as .__tipHtml so we don't re-serialize on
+  // every mousemove. Positioning is card-relative (getBoundingClientRect on
+  // the tooltip's offsetParent) so it stays pinned even when the page scrolls.
+  function positionTooltip(evt) {
+    if (!tooltipEl) return;
+    var parent = tooltipEl.offsetParent || document.body;
+    var pRect = parent.getBoundingClientRect();
+    var x = evt.clientX - pRect.left + 14;
+    var y = evt.clientY - pRect.top + 14;
+    // Clamp to viewport-right so the tooltip doesn't hang off the edge.
+    var maxX = parent.clientWidth - tooltipEl.offsetWidth - 8;
+    if (x > maxX) x = evt.clientX - pRect.left - tooltipEl.offsetWidth - 14;
+    tooltipEl.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
+  }
+  function showTooltip(evt) {
+    if (!tooltipEl) return;
+    var html = this.__tipHtml;
+    if (!html) return;
+    tooltipEl.innerHTML = html;
+    tooltipEl.classList.add('visible');
+    positionTooltip(evt);
+  }
+  function moveTooltip(evt) { positionTooltip(evt); }
+  function hideTooltip() {
+    if (!tooltipEl) return;
+    tooltipEl.classList.remove('visible');
+  }
 
   function xPos(cost) {
     var l = Math.max(X_MIN_LOG, Math.min(X_MAX_LOG, Math.log(cost) / Math.LN10));
@@ -649,14 +707,25 @@ const SCRIPT = `
       'font-family':'ui-monospace, Menlo, monospace',
       'font-size':11, fill:'#6b7280', 'text-anchor':'end'
     });
-    for (var q = yFloor; q <= Y_CEIL; q += 10) {
+    // Ticks every 2.5%. Major (10-unit) ticks get a solid grid line +
+    // dark label. Half-major (5-unit) and quarter (2.5-unit) get dashed
+    // hairlines with progressively dimmer labels so the eye still latches
+    // onto the 10-unit rhythm quickly.
+    var yStep = 2.5;
+    for (var q = yFloor; q <= Y_CEIL + 1e-9; q += yStep) {
       var yq = yPos(q);
+      var isMajor = Math.abs(q % 10) < 1e-9;
+      var isHalf  = !isMajor && Math.abs(q % 5) < 1e-9;
       root.appendChild(svgEl('line', {
         x1:PLOT.xL, y1:yq, x2:PLOT.xR, y2:yq,
-        stroke:'#e5e7eb', 'stroke-width':1
+        stroke:'#e5e7eb',
+        'stroke-width': isMajor ? 1 : (isHalf ? 0.6 : 0.4),
+        'stroke-dasharray': isMajor ? '' : (isHalf ? '2,3' : '1,3')
       }));
       var yt = svgEl('text', { x:PLOT.xL - 8, y:yq + 4 });
-      yt.textContent = q + '%';
+      // Trim redundant decimals: 12.5 stays; 15.0 shown as 15.
+      yt.textContent = (Number.isInteger(q) ? String(q) : q.toFixed(1)) + '%';
+      if (!isMajor) yt.setAttribute('fill', isHalf ? '#9ca3af' : '#c0c6cf');
       yLabelG.appendChild(yt);
     }
     root.appendChild(yLabelG);
@@ -766,6 +835,26 @@ const SCRIPT = `
       }));
     }
 
+    // Split a label into up to 2 lines to keep the dot cluster readable.
+    // Threshold picked so short IDs like "GPT 5" stay one line but longer
+    // ones like "Gemini 3.1 Pro Preview" wrap. Break at the first space
+    // AFTER the target position, or fall back to a single line if no space.
+    function wrapLabelTo2Lines(text, targetFirstLine) {
+      if (text.length <= 16) return [text];
+      var splitIx = -1;
+      for (var i = targetFirstLine; i < text.length && i < targetFirstLine + 8; i++) {
+        if (text.charAt(i) === ' ') { splitIx = i; break; }
+      }
+      if (splitIx < 0) {
+        // Fallback — try earlier space.
+        for (var j = targetFirstLine - 1; j > 4; j--) {
+          if (text.charAt(j) === ' ') { splitIx = j; break; }
+        }
+      }
+      if (splitIx < 0) return [text];
+      return [text.substring(0, splitIx), text.substring(splitIx + 1)];
+    }
+
     function drawDot(d) {
       var isFront = !!frontierSet[d.destSlug];
       var cx = xPos(d.x), cy = yPos(d.y);
@@ -774,15 +863,36 @@ const SCRIPT = `
       var strokeDark = providerStroke(d.providerSlug);
       var logoUri = (pdata.providerLogos || {})[d.providerSlug];
 
+      // Group with mouse handlers wired to the shared #chart-tooltip div.
+      // SVG native <title> takes ~1s to appear in Chrome, so custom is worth
+      // the ~30 lines. Kept minimal — no library, no per-dot listener leak
+      // (handlers reference the shared tooltipEl, all groups garbage-collect
+      // together on re-render).
+      var group = svgEl('g', { class: 'dot-group', 'data-dest': d.destSlug });
+      var routerName = d.router === 'direct' ? 'direct' : (ROUTER_LABEL[d.router] || d.router);
+      var passesLine = (d.passed != null && d.attempted != null)
+        ? '<div class="tt-line"><span class="tt-num">' + d.passed + '/' + d.attempted + '</span> passes</div>'
+        : '';
+      var tipHtml =
+        '<div class="tt-title">' + escapeText(d.model) + '</div>' +
+        '<div class="tt-line">' + escapeText(d.provider) + ' · ' + escapeText(routerName) +
+        (d.variant ? ' · ' + escapeText(d.variant) : '') + '</div>' +
+        '<div class="tt-line"><span class="tt-num">' + formatDollar(d.x) + '</span> per pass · quality <span class="tt-num">' + d.y.toFixed(1) + '%</span></div>' +
+        passesLine;
+      group.__tipHtml = tipHtml;
+      group.addEventListener('mouseenter', showTooltip);
+      group.addEventListener('mousemove',  moveTooltip);
+      group.addEventListener('mouseleave', hideTooltip);
+
       // Frontier canary ring
       if (isFront) {
-        contentLayer.appendChild(shapeEl(shape, cx, cy, 13, {
+        group.appendChild(shapeEl(shape, cx, cy, 13, {
           fill: 'none', stroke: '#EAB308', strokeWidth: 2
         }));
       }
       // Router shape: white background with provider-coloured border. Logo
       // rides on top; the shape's silhouette still encodes Router.
-      contentLayer.appendChild(shapeEl(shape, cx, cy, isFront ? 11 : 10, {
+      group.appendChild(shapeEl(shape, cx, cy, isFront ? 11 : 10, {
         fill: '#ffffff', fillOpacity: isFront ? 1 : 0.92,
         stroke: strokeDark, strokeWidth: isFront ? 1.75 : 1.25
       }));
@@ -797,12 +907,11 @@ const SCRIPT = `
           preserveAspectRatio: 'xMidYMid meet',
           opacity: isFront ? 1 : 0.75
         });
-        // href attribute is namespaced in older browsers — set both
         img.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', logoUri);
-        contentLayer.appendChild(img);
+        group.appendChild(img);
       } else {
         // No logo — fall back to provider-coloured inner dot
-        contentLayer.appendChild(shapeEl('circle', cx, cy, isFront ? 4.5 : 4, {
+        group.appendChild(shapeEl('circle', cx, cy, isFront ? 4.5 : 4, {
           fill: fill, fillOpacity: isFront ? 1 : 0.7,
           stroke: 'none'
         }));
@@ -810,13 +919,29 @@ const SCRIPT = `
 
       var routerBadge = d.router === 'direct' ? '' : ' [' + (ROUTER_LABEL[d.router] || d.router) + ']';
       var variantSuffix = d.variant ? ' · ' + d.variant : '';
+      var labelText = d.model + variantSuffix + routerBadge;
+      var lines = wrapLabelTo2Lines(labelText, 12);
+      var labelX = cx + 16;
       var label = svgEl('text', {
-        x: cx + 18, y: cy + 4,
+        x: labelX, y: cy + 3.5,
         'font-family': 'ui-monospace, Menlo, monospace',
-        'font-size': 11, fill: isFront ? '#0f172a' : '#6b7280'
+        'font-size': 9.5, fill: isFront ? '#0f172a' : '#6b7280'
       });
-      label.textContent = d.model + variantSuffix + routerBadge;
-      contentLayer.appendChild(label);
+      if (lines.length === 1) {
+        label.textContent = lines[0];
+      } else {
+        // Two-line layout: shift the anchor up half a line so the pair sits
+        // vertically centered on the dot.
+        label.setAttribute('y', String(cy - 1.5));
+        var t1 = svgEl('tspan', { x: labelX, dy: 0 });
+        t1.textContent = lines[0];
+        var t2 = svgEl('tspan', { x: labelX, dy: 10 });
+        t2.textContent = lines[1];
+        label.appendChild(t1);
+        label.appendChild(t2);
+      }
+      group.appendChild(label);
+      contentLayer.appendChild(group);
     }
     var offFront = [], onFront = [];
     for (var d2 = 0; d2 < dots.length; d2++) (frontierSet[dots[d2].destSlug] ? onFront : offFront).push(dots[d2]);

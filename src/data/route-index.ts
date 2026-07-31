@@ -191,7 +191,19 @@ export function buildRouteList(
     for (const wireSlug of cat.models_raw) {
       if (!isRouteRunnable(routerSlug, wireSlug)) continue;
       const family = familyFromSlug(wireSlug);
-      const priceKey = tryDirectPriceKey(routerSlug, wireSlug);
+      // Prefer the Haiku-computed canonical form (cat.canonical_map[wireSlug])
+      // as the pricing key — that's the same OR canonical slug DIRECT_PRICING
+      // is keyed by. Falls back to tryDirectPriceKey for legacy Kimi/GLM
+      // family regex matching. Without this, direct-provider models added
+      // 2026-07-31 (OpenAI/Anthropic/DeepSeek/xAI/Gemini) never resolved a
+      // price and rendered `—` in PickDestinations.
+      const canonical = cat.canonical_map?.[wireSlug];
+      let priceKey: string | null = null;
+      if (canonical && DIRECT_PRICING[routerSlug]?.[canonical]) {
+        priceKey = canonical;
+      } else {
+        priceKey = tryDirectPriceKey(routerSlug, wireSlug);
+      }
       const price = priceKey ? DIRECT_PRICING[routerSlug]?.[priceKey] ?? null : null;
       // Vercel: only emit the "auto" row when no per-provider endpoints
       // are loaded yet. Once endpoints load, users pick variants directly.

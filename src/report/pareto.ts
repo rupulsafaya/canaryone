@@ -71,10 +71,31 @@ export function friendlyModel(modelSlug: string): string {
   let s = modelSlug;
   // Fireworks-specific: accounts/<team>/{routers,models}/<model>
   s = s.replace(/^accounts\/[^/]+\/(?:routers|models)\//, '');
+  // Google Gemini catalog IDs are prefixed with `models/`.
+  s = s.replace(/^models\//, '');
   // Generic vendor prefix: <vendor>/<model>
   s = s.replace(/^[a-zA-Z0-9._-]+\//, '');
+  // Strip trailing dated release pins like `-20251001` (YYYYMMDD) or
+  // `-2025-08-07` (YYYY-MM-DD). Provider APIs use these as canonical
+  // model IDs; on the chart they add noise without adding meaning.
+  s = s.replace(/-\d{8}$/, '');
+  s = s.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+  // Collapse version tuples between digits: `-4-5-` → `-4.5-`, `-3-5$` → `-3.5`.
+  // Only two consecutive single-digit fragments — leaves `gpt-5`, `grok-4.5`,
+  // `deepseek-v4` alone (only one digit) but fixes Anthropic's `claude-opus-4-5`.
+  s = s.replace(/-(\d)-(\d)(?=-|$)/g, '-$1.$2');
   const parts = s.split(/[-_]/);
-  return parts.map((p) => p.length === 0 ? p : p[0].toUpperCase() + p.slice(1)).join(' ');
+  // Known-brand fixups applied post title-case so "Gpt 5"→"GPT-5",
+  // "Glm 5.2"→"GLM-5.2", "Deepseek V4"→"DeepSeek V4". Keep this list short —
+  // it's cosmetic-only.
+  const BRAND_CASE: Record<string, string> = {
+    Gpt: 'GPT', Glm: 'GLM', Deepseek: 'DeepSeek', Xai: 'xAI',
+  };
+  return parts.map((p) => {
+    if (p.length === 0) return p;
+    const cased = p[0].toUpperCase() + p.slice(1);
+    return BRAND_CASE[cased] ?? cased;
+  }).join(' ');
 }
 
 // Provider display name. Case-insensitive; canonicalises Moonshot regional
@@ -221,17 +242,26 @@ function buildDotFromSessions(
 export function buildParetoData(data: RunData): ParetoData {
   const sessions = data.sessions;
 
-  // Group all sessions by destination once, so we can iterate per-filter cheaply.
-  const allByDest = new Map<string, SessionRow[]>();
+  // Group all sessions by LANE = (model_slug, destination_slug), not by
+  // destination_slug alone. A single destination like `direct:anthropic`
+  // hosts many models (claude-opus-5, claude-sonnet-5, claude-haiku-4.5, …)
+  // and each is a distinct dot on the chart. Grouping by destination alone
+  // collapsed all Anthropic models into one averaged dot — off-by-a-dimension
+  // that only surfaced with the 2026-07-31 direct-provider expansion where
+  // multiple models share the same destSlug.
+  const laneKey = (s: SessionRow) => `${s.destination_slug}::${s.model_slug}`;
+  const allByLane = new Map<string, SessionRow[]>();
   for (const s of sessions) {
-    const arr = allByDest.get(s.destination_slug);
-    if (arr) arr.push(s); else allByDest.set(s.destination_slug, [s]);
+    const k = laneKey(s);
+    const arr = allByLane.get(k);
+    if (arr) arr.push(s); else allByLane.set(k, [s]);
   }
 
   // All-eval aggregate dots
   const allDots: Dot[] = [];
-  for (const [slug, ss] of allByDest) {
-    const dot = buildDotFromSessions(slug, ss, data.verdictBySession);
+  for (const [, ss] of allByLane) {
+    // Any session's destination_slug is fine — they all share it within a lane.
+    const dot = buildDotFromSessions(ss[0].destination_slug, ss, data.verdictBySession);
     if (dot) allDots.push(dot);
   }
 
@@ -240,9 +270,10 @@ export function buildParetoData(data: RunData): ParetoData {
   const perTask: Record<string, Dot[]> = {};
   for (const taskId of taskIds) {
     const dots: Dot[] = [];
-    for (const [slug, ss] of allByDest) {
+    for (const [, ss] of allByLane) {
       const filtered = ss.filter((s) => s.task_id === taskId);
-      const dot = buildDotFromSessions(slug, filtered, data.verdictBySession);
+      if (filtered.length === 0) continue;
+      const dot = buildDotFromSessions(filtered[0].destination_slug, filtered, data.verdictBySession);
       if (dot) dots.push(dot);
     }
     perTask[taskId] = dots;
@@ -276,7 +307,7 @@ export function buildParetoData(data: RunData): ParetoData {
   // Repeats per (dest, task) — same across all in a well-formed run. Take
   // the mode across destinations to be robust to a single half-completed lane.
   const repeatCounts: number[] = [];
-  for (const [, ss] of allByDest) {
+  for (const [, ss] of allByLane) {
     const perTaskRepeats = new Map<string, Set<number>>();
     for (const s of ss) {
       const set = perTaskRepeats.get(s.task_id) ?? perTaskRepeats.set(s.task_id, new Set()).get(s.task_id)!;

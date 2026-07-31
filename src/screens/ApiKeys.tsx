@@ -10,6 +10,7 @@ import {
   readEnv,
   resolveUrlTemplate,
   getProvider,
+  ANTHROPIC_API_VERSION,
   type RouterEntry,
   type DirectEntry,
   type EnvSource,
@@ -156,8 +157,17 @@ export function ApiKeys() {
       let result: 'ok' | 'rejected' | 'unverified';
       let reason = '';
       try {
+        // Match the same auth-kind logic as fetchModels — Anthropic's
+        // /v1/models needs x-api-key + anthropic-version, not Bearer.
+        const headers: Record<string, string> = { Accept: 'application/json' };
+        if (provider.kind === 'direct' && provider.catalogAuthKind === 'anthropic') {
+          headers['x-api-key'] = token;
+          headers['anthropic-version'] = ANTHROPIC_API_VERSION;
+        } else {
+          headers.Authorization = `Bearer ${token}`;
+        }
         const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          headers,
           signal: AbortSignal.timeout(5000),
         });
         if (res.status === 200) result = 'ok';
@@ -532,7 +542,14 @@ async function refreshAllConfiguredRows(
   patchRow: (id: string, partial: Partial<RowState>) => void,
 ): Promise<void> {
   const targets = rows.filter((r) => r.status === 'shipped' && rowStates[r.id] && isRowSet(rowStates[r.id].status));
-  await Promise.all(targets.map((row) => refreshSingleRow(row, patchRow)));
+  // Serialized on purpose. refreshCatalog in scan/provider-catalog.ts does a
+  // load→modify→write on ~/.c1/provider-catalogs.json without file locking;
+  // parallel writers overwrite each other's entries (last-writer-wins), which
+  // is how the "count flashes then reverts to —" bug shows up under Shift-R.
+  // Cost: total time ≈ sum of per-row times instead of max. Fine at N≤13.
+  for (const row of targets) {
+    await refreshSingleRow(row, patchRow);
+  }
 }
 
 function cleanPaste(raw: string): { value: string; error: string | null } {

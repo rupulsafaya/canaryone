@@ -1,6 +1,6 @@
 {
   "name": "canaryone",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Route your test suite through every AI provider hosting your model; compare cost-per-passing-outcome and trajectory quality locally.",
   "type": "module",
   "bin": {
