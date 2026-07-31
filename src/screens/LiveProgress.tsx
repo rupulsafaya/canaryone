@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { Box, Text, useInput } from 'ink';
@@ -116,6 +116,20 @@ export function LiveProgress() {
     return () => clearInterval(t);
   }, [activePhase]);
   const spinner = SPINNER_FRAMES[spinnerIdx];
+
+  // Auto-open the two report pages (new Pareto report + legacy index) once
+  // the run completes and the report generator has written both files. The
+  // enter/v hotkey still works for manual re-open; this just spares the user
+  // one keystroke on the happy path. Ref-guarded so re-renders can't fire it
+  // twice; short stagger between opens so most browsers surface both as tabs
+  // rather than racing on the same doc load.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!runFinishedAt || !reportHtmlPath || autoOpenedRef.current) return;
+    autoOpenedRef.current = true;
+    openInFileManager(reportPagePath(reportHtmlPath));
+    setTimeout(() => openInFileManager(reportHtmlPath), 250);
+  }, [runFinishedAt, reportHtmlPath]);
 
   useInput((input, key) => {
     if (!runFinishedAt) {
@@ -327,11 +341,11 @@ export function LiveProgress() {
                 <Text color="gray" dimColor>  (index)</Text>
               </Box>
               <Box>
-                <Text color="gray">        Press </Text>
+                <Text color="gray">        Auto-opened both pages in your browser. Press </Text>
                 <Text color="cyan" bold>enter</Text>
-                <Text color="gray"> or </Text>
+                <Text color="gray"> / </Text>
                 <Text color="cyan" bold>v</Text>
-                <Text color="gray"> to view in browser · Cmd+Click any </Text>
+                <Text color="gray"> to re-open · Cmd+Click any </Text>
                 <Text color="cyan" bold>file://</Text>
                 <Text color="gray"> link above.</Text>
               </Box>

@@ -809,26 +809,6 @@ const SCRIPT = `
     var frontierSet = {};
     for (var i = 0; i < frontier.length; i++) frontierSet[frontier[i].destSlug] = true;
 
-    if (state.showDist) {
-      for (var w = 0; w < dots.length; w++) {
-        var dw = dots[w];
-        var isFront = !!frontierSet[dw.destSlug];
-        var col = providerFill(dw.providerSlug);
-        var op = isFront ? 0.35 : 0.22;
-        var g = svgEl('g', { stroke: col, 'stroke-opacity': op, 'stroke-width': 1 });
-        var yw = yPos(dw.y), xw = xPos(dw.x);
-        var xa = xPos(dw.x_min), xb = xPos(dw.x_max);
-        g.appendChild(svgEl('line', { x1:xa, y1:yw, x2:xb, y2:yw }));
-        g.appendChild(svgEl('line', { x1:xa, y1:yw - 4, x2:xa, y2:yw + 4 }));
-        g.appendChild(svgEl('line', { x1:xb, y1:yw - 4, x2:xb, y2:yw + 4 }));
-        var ya = yPos(dw.y_min), yb = yPos(dw.y_max);
-        g.appendChild(svgEl('line', { x1:xw, y1:ya, x2:xw, y2:yb }));
-        g.appendChild(svgEl('line', { x1:xw - 4, y1:ya, x2:xw + 4, y2:ya }));
-        g.appendChild(svgEl('line', { x1:xw - 4, y1:yb, x2:xw + 4, y2:yb }));
-        contentLayer.appendChild(g);
-      }
-    }
-
     if (frontier.length >= 2) {
       var pts = frontier.map(function(d) { return xPos(d.x) + ',' + yPos(d.y); }).join(' ');
       contentLayer.appendChild(svgEl('polyline', {
@@ -956,6 +936,36 @@ const SCRIPT = `
     for (var d2 = 0; d2 < dots.length; d2++) (frontierSet[dots[d2].destSlug] ? onFront : offFront).push(dots[d2]);
     for (var of_ = 0; of_ < offFront.length; of_++) drawDot(offFront[of_]);
     for (var on_ = 0; on_ < onFront.length; on_++) drawDot(onFront[on_]);
+
+    // Error bars drawn AFTER dots so short bars (span < dot radius) aren't
+    // hidden by the dot's fill/logo. Visibility params tuned to be legible
+    // over both the cream background and the bright white dot fill: stroke
+    // width 1.5px, cap length ±6px, opacity 0.75/0.6, provider color.
+    // Users can toggle the whole layer off via the "show per-repeat
+    // distribution" checkbox.
+    if (state.showDist) {
+      var CAP = 6;
+      for (var w = 0; w < dots.length; w++) {
+        var dw = dots[w];
+        var isFront = !!frontierSet[dw.destSlug];
+        var col = providerFill(dw.providerSlug);
+        var op = isFront ? 0.75 : 0.6;
+        var g = svgEl('g', {
+          stroke: col, 'stroke-opacity': op, 'stroke-width': 1.5,
+          'stroke-linecap': 'round',
+        });
+        var yw = yPos(dw.y), xw = xPos(dw.x);
+        var xa = xPos(dw.x_min), xb = xPos(dw.x_max);
+        g.appendChild(svgEl('line', { x1:xa, y1:yw, x2:xb, y2:yw }));
+        g.appendChild(svgEl('line', { x1:xa, y1:yw - CAP, x2:xa, y2:yw + CAP }));
+        g.appendChild(svgEl('line', { x1:xb, y1:yw - CAP, x2:xb, y2:yw + CAP }));
+        var ya = yPos(dw.y_min), yb = yPos(dw.y_max);
+        g.appendChild(svgEl('line', { x1:xw, y1:ya, x2:xw, y2:yb }));
+        g.appendChild(svgEl('line', { x1:xw - CAP, y1:ya, x2:xw + CAP, y2:ya }));
+        g.appendChild(svgEl('line', { x1:xw - CAP, y1:yb, x2:xw + CAP, y2:yb }));
+        contentLayer.appendChild(g);
+      }
+    }
 
     if (caption) {
       var totalDests = (pdata.data.all || []).length;
