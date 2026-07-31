@@ -21,6 +21,11 @@ function openInFileManager(target: string): void {
   } catch { /* silent — the artifact paths are printed onscreen too */ }
 }
 
+// Given the index.html absolute path, return the sibling report.html path.
+function reportPagePath(indexHtmlPath: string): string {
+  return path.join(path.dirname(indexHtmlPath), 'report.html');
+}
+
 // Resolve model + destination display metadata from wherever we can find it —
 // the fixture catalog is only a mock. Real user runs select models from the
 // live OR catalog; those are NOT in fixtures.ts.
@@ -125,7 +130,9 @@ export function LiveProgress() {
     //   r         → run again
     //   q / esc   → quit
     if ((key.return || input === 'v') && reportHtmlPath) {
-      openInFileManager(reportHtmlPath);
+      // enter/v opens the new report.html (Pareto). Index.html is still
+      // reachable via the clickable link in the summary output.
+      openInFileManager(reportPagePath(reportHtmlPath));
       return;
     }
     if (input === 'o' && runDir) {
@@ -311,14 +318,20 @@ export function LiveProgress() {
             <Box marginTop={0} flexDirection="column">
               <Box>
                 <Text color="gray">Report: </Text>
+                <Text color="#eab308" bold>{reportPagePath(reportHtmlPath)}</Text>
+                <Text color="gray" dimColor>  (new)</Text>
+              </Box>
+              <Box>
+                <Text color="gray">        </Text>
                 <Text color="#22c55e" bold>{reportHtmlPath}</Text>
+                <Text color="gray" dimColor>  (index)</Text>
               </Box>
               <Box>
                 <Text color="gray">        Press </Text>
                 <Text color="cyan" bold>enter</Text>
                 <Text color="gray"> or </Text>
                 <Text color="cyan" bold>v</Text>
-                <Text color="gray"> to view in your browser.</Text>
+                <Text color="gray"> to view report.html in your browser (Cmd+Click paths above).</Text>
               </Box>
             </Box>
           )}
@@ -336,7 +349,7 @@ export function LiveProgress() {
             <Text color="gray" dimColor> to open in Finder)</Text>
           </Box>
           <Box>
-            <Text color="gray" dimColor>  traffic.jsonl · sessions/&lt;session_id&gt;.md · meta.json · report/index.html</Text>
+            <Text color="gray" dimColor>  traffic.jsonl · sessions/&lt;session_id&gt;.md · meta.json · report/report.html · report/index.html</Text>
           </Box>
           <Box>
             <Text color="gray">SQLite: </Text>

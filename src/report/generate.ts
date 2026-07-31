@@ -16,6 +16,7 @@ import { renderHeatmap } from './sections/heatmap.js';
 import { renderSessionList } from './sections/session-list.js';
 import { renderAggregate } from './sections/aggregate.js';
 import { renderTweetCard } from './sections/tweet-card.js';
+import { renderNextReport } from './next-report.js';
 
 export async function generate(runId: string, configDir: string): Promise<string> {
   const data = await loadRun(runId, configDir);
@@ -42,5 +43,10 @@ export async function generate(runId: string, configDir: string): Promise<string
   // Screenshot-first sibling artifact — fixed-width hero with lane bars +
   // 3 findings. Independent document (own <html>), so it screenshots cleanly.
   await fsp.writeFile(path.join(outDir, 'tweet.html'), tweetHtml, 'utf8');
+  // Next-generation report — canaryone-brand aesthetic (cream + canary),
+  // starting with the Pareto section. Will gradually absorb sections from
+  // index.html as they get rethemed. Standalone HTML, own <html>.
+  const nextHtml = renderNextReport(data);
+  await fsp.writeFile(path.join(outDir, 'report.html'), nextHtml, 'utf8');
   return outPath;
 }
