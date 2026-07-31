@@ -11,6 +11,9 @@ importers:
       '@inkjs/ui':
         specifier: ^2.0.0
         version: 2.0.0(ink@5.2.1(@types/react@18.3.31)(react@18.3.1))
+      '@lobehub/icons-static-svg':
+        specifier: 1.94.0
+        version: 1.94.0
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
@@ -394,6 +397,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@lobehub/icons-static-svg@1.94.0':
+    resolution: {integrity: sha512-Inx1TYkjLH6YeHOIHeVW9+OM/xxRnk8TmcQVKquFUDBmE3X9sUuRGt7kALrrDBNNAbrWz7Qq6fAiFj9E9Mmw9Q==}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -1297,6 +1303,8 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@lobehub/icons-static-svg@1.94.0': {}
 
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
