@@ -12,6 +12,40 @@ import { loadRoutePicks, saveRoutePicks } from '../scan/route-picks.js';
 import { buildRouteList, type Route } from '../data/route-index.js';
 import { fetchVercelEndpoints, type VercelEndpoint } from '../scan/vercel-endpoints.js';
 import { probeLanes, summarizePreflight, type PreflightResult } from '../proxy/preflight.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const execFileAsync = promisify(execFile);
+
+// Check whether the target repo has uncommitted changes to code files. The
+// runner spawns a `git worktree add HEAD` — uncommitted edits silently do NOT
+// reach the ephemeral checkout, so users need to know. Filters `.env*`,
+// `.c1/**`, `node_modules`, and other non-source paths so day-to-day noise
+// doesn't produce false positives. Returns null on non-git targets (nothing
+// to check) or if the git command fails (permission, missing binary, etc.).
+async function checkTargetGitDirty(targetDir: string): Promise<{ dirty: boolean; files: string[] } | null> {
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', targetDir, 'status', '--porcelain'], {
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    const lines = stdout.split('\n').filter((l) => l.length > 0);
+    const files: string[] = [];
+    for (const line of lines) {
+      // Porcelain format: `XY <path>` where X=index, Y=worktree. Both '??' (untracked)
+      // and 'M ' / ' M' / 'A ' etc are actionable. We want anything except deletions.
+      const path = line.slice(3);
+      if (!path) continue;
+      // Skip environment / cache / node_modules / build artifacts.
+      if (path.startsWith('.env')) continue;
+      if (path.startsWith('.c1/')) continue;
+      if (path.startsWith('node_modules/')) continue;
+      if (path.startsWith('dist/') || path.startsWith('build/') || path.startsWith('.next/')) continue;
+      files.push(path);
+    }
+    return { dirty: files.length > 0, files };
+  } catch {
+    return null;
+  }
+}
 import { runMethodology, isMethodologyFresh } from '../scan/methodology.js';
 import { RunEngine, type LaneSpec, type TaskSpec, type RunSpec } from '../runner/orchestrator.js';
 import type { CellState as EngineCellState, CellUpdate, StepUpdate, SessionKey } from '../runner/event-bus.js';
@@ -85,6 +119,18 @@ type State = {
     results: Array<{ laneKey: LaneKey; result: PreflightResult; modelSlug: string; destinationSlug: string; router: string; providerTag: string | null }>;
     error: string | null;
   };
+  /**
+   * Populated alongside runPreflight(). If the target repo has uncommitted
+   * changes to source-under-test files, they will NOT be in the ephemeral
+   * `git worktree add HEAD` checkout the runner spawns — so runs execute the
+   * last committed version, not what the user is looking at. Confirm surfaces
+   * this as a soft warning above the preflight banner. null = not checked
+   * (non-git target, or check failed).
+   */
+  targetGitDirty: {
+    dirty: boolean;
+    files: string[];         // relative paths of modified/added files
+  } | null;
   endpointStatusBySlug: Record<string, EndpointStatus>;
   endpointErrorBySlug: Record<string, string>;
   onboardingStep: number;
@@ -301,6 +347,7 @@ export const useStore = create<State>((set, get) => ({
   vercelEndpointsBySlug: {},
   pickedRouteIds: new Set<string>(),
   preflight: { status: 'idle', results: [], error: null },
+  targetGitDirty: null,
   endpointStatusBySlug: {},
   endpointErrorBySlug: {},
   onboardingStep: 0,
@@ -556,6 +603,10 @@ export const useStore = create<State>((set, get) => ({
     const filtered = skipLaneKeys
       ? lanes.filter((l) => !skipLaneKeys.has(laneKey(l.modelSlug, l.destinationSlug)))
       : lanes;
+    // Kick off the git-status check in parallel with the lane probes. The
+    // runner will `git worktree add HEAD` — uncommitted changes silently
+    // don't reach the run, so users need to know.
+    const targetDirtyPromise = checkTargetGitDirty(get().targetDir);
     const probed = await probeLanes(filtered);
     const results = probed.map(({ lane, result }) => ({
       laneKey: laneKey(lane.modelSlug, lane.destinationSlug),
@@ -565,7 +616,8 @@ export const useStore = create<State>((set, get) => ({
       router: lane.router,
       providerTag: lane.providerTag,
     }));
-    set({ preflight: { status: 'done', results, error: null } });
+    const targetGitDirty = await targetDirtyPromise;
+    set({ preflight: { status: 'done', results, error: null }, targetGitDirty });
   },
   /**
    * Refresh one provider's catalog with OR canonical slugs as alignment

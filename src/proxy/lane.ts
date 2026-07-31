@@ -185,6 +185,33 @@ async function handleChatCompletions(
   };
   if (cfg.pinTemperature !== undefined) rewritten.temperature = cfg.pinTemperature;
   if (cfg.pinSeed !== undefined) rewritten.seed = cfg.pinSeed;
+
+  // OpenAI deprecated `max_tokens` in favor of `max_completion_tokens` for
+  // reasoning-family models — the new field also accounts for hidden
+  // reasoning tokens. Per OpenAI's official statement (community thread from
+  // Sep 2024): "max_tokens continues to be supported in all existing models,
+  // but the o1 series only supports max_completion_tokens." Extended by our
+  // 2026-07-31 probes to gpt-5+ (returns HTTP 400 on max_tokens).
+  //
+  // Only rewrite for the model families that REQUIRE it — o-series (o1..o9)
+  // and gpt-5+ family. Don't blanket-rename for gpt-4o etc; those still
+  // accept max_tokens and blanket-rewrite would change billing semantics
+  // (max_completion_tokens counts reasoning tokens differently). See the
+  // LangChain langchain-ai/docs#455 complaint for why the aggressive path is
+  // wrong.
+  //
+  // Also strip any vendor prefix before matching — for OR-routed lanes the
+  // model on the wire is `openai/gpt-5-nano`, for direct it's `gpt-5-nano`.
+  const wireModel = typeof rewritten.model === 'string' ? rewritten.model : '';
+  const bareModel = wireModel.includes('/') ? wireModel.slice(wireModel.lastIndexOf('/') + 1) : wireModel;
+  if (
+    rewritten.max_tokens != null &&
+    rewritten.max_completion_tokens == null &&
+    /^(gpt-[5-9]|o[1-9])(-|\.|$)/i.test(bareModel)
+  ) {
+    rewritten.max_completion_tokens = rewritten.max_tokens;
+    delete rewritten.max_tokens;
+  }
   if (cfg.router === 'openrouter' && cfg.providerTag) {
     rewritten.provider = { order: [cfg.providerTag] };
   } else if (cfg.router === 'vercel' && cfg.providerTag) {

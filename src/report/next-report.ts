@@ -589,7 +589,9 @@ const SCRIPT = `
       minY = Math.min(minY, d.y);
       if (typeof d.y_min === 'number') minY = Math.min(minY, d.y_min);
     }
-    return Math.max(0, Math.floor((minY - 4) / 10) * 10);
+    // Floor to nearest 5% below (minY - 3) rather than nearest 10% below
+    // (minY - 4). Tighter framing when data cluster sits well above 0.
+    return Math.max(0, Math.floor((minY - 3) / 5) * 5);
   }
   function computeParetoFrontier(dots) {
     var clean = [];
@@ -921,9 +923,16 @@ const SCRIPT = `
       var variantSuffix = d.variant ? ' · ' + d.variant : '';
       var labelText = d.model + variantSuffix + routerBadge;
       var lines = wrapLabelTo2Lines(labelText, 12);
-      var labelX = cx + 16;
+      // Rough width estimate for the label at 9.5px monospace — each glyph
+      // averages ~5.7px. If the label would overrun the plot's right edge,
+      // flip it to sit on the LEFT of the dot with text-anchor='end'.
+      var longestLine = lines.reduce(function(a, b){ return b.length > a.length ? b : a; }, '');
+      var estWidth = longestLine.length * 5.7;
+      var flipLeft = (cx + 16 + estWidth) > PLOT.xR;
+      var labelX = flipLeft ? (cx - 16) : (cx + 16);
       var label = svgEl('text', {
         x: labelX, y: cy + 3.5,
+        'text-anchor': flipLeft ? 'end' : 'start',
         'font-family': 'ui-monospace, Menlo, monospace',
         'font-size': 9.5, fill: isFront ? '#0f172a' : '#6b7280'
       });

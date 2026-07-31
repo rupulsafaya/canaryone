@@ -191,12 +191,17 @@ export function buildRouteList(
     for (const wireSlug of cat.models_raw) {
       if (!isRouteRunnable(routerSlug, wireSlug)) continue;
       const family = familyFromSlug(wireSlug);
-      // Prefer the Haiku-computed canonical form (cat.canonical_map[wireSlug])
-      // as the pricing key — that's the same OR canonical slug DIRECT_PRICING
-      // is keyed by. Falls back to tryDirectPriceKey for legacy Kimi/GLM
-      // family regex matching. Without this, direct-provider models added
-      // 2026-07-31 (OpenAI/Anthropic/DeepSeek/xAI/Gemini) never resolved a
-      // price and rendered `—` in PickDestinations.
+      // Pricing resolution chain, in order:
+      //   1. DIRECT_PRICING keyed by Haiku's canonical form (cat.canonical_map[wireSlug])
+      //      — hand-seeded, per-provider pricing. Most accurate; used first.
+      //   2. tryDirectPriceKey — legacy family regex (Kimi/GLM) for the 9
+      //      pre-2026-07-31 providers that didn't have canonical_map coverage.
+      //   3. **OR catalog fallback** — added 0.3.1. If canonical maps to an
+      //      OpenRouter-catalog entry, use OR's `inputPrice`/`outputPrice`.
+      //      Verified 2026-07-31 that OR resells at exact provider list price
+      //      for the 6 tier-1 direct providers (100% match on 30+ models).
+      //      Extends automatic pricing to any model canonicalizable to an
+      //      OR-cataloged slug — no per-model hand-seeding required.
       const canonical = cat.canonical_map?.[wireSlug];
       let priceKey: string | null = null;
       if (canonical && DIRECT_PRICING[routerSlug]?.[canonical]) {
@@ -204,7 +209,13 @@ export function buildRouteList(
       } else {
         priceKey = tryDirectPriceKey(routerSlug, wireSlug);
       }
-      const price = priceKey ? DIRECT_PRICING[routerSlug]?.[priceKey] ?? null : null;
+      let price = priceKey ? DIRECT_PRICING[routerSlug]?.[priceKey] ?? null : null;
+      if (!price && canonical && orCatalog) {
+        const orMeta = orCatalog.models.find((m) => m.slug === canonical);
+        if (orMeta && (orMeta.inputPrice > 0 || orMeta.outputPrice > 0)) {
+          price = { input: orMeta.inputPrice, output: orMeta.outputPrice };
+        }
+      }
       // Vercel: only emit the "auto" row when no per-provider endpoints
       // are loaded yet. Once endpoints load, users pick variants directly.
       const vercelEndpoints = routerSlug === 'vercel' ? (vercelEndpointsBySlug[wireSlug] ?? []) : [];

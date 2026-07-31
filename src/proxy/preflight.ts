@@ -36,7 +36,13 @@ export async function probeLane(lane: LaneSpec): Promise<PreflightResult> {
   // other providers still take `max_tokens`. Detect by model-id prefix and
   // set the appropriate field; on error, retryOnce below tries the alternate.
   const model = lane.modelSlugForForward ?? lane.modelSlug;
-  const usesCompletionTokens = /^(gpt-5|o[1-9])(-|$|\.)/i.test(model);
+  // Match OpenAI models that require `max_completion_tokens` per their docs:
+  // o-series (o1, o3, o4-mini…) + gpt-5+ family. Widened from `gpt-5` to
+  // `gpt-[5-9]` for forward compatibility with future generations. Strip
+  // any vendor prefix (OR-routed lanes carry `openai/gpt-5-nano`; direct
+  // lanes carry `gpt-5-nano`).
+  const bareModel = model.includes('/') ? model.slice(model.lastIndexOf('/') + 1) : model;
+  const usesCompletionTokens = /^(gpt-[5-9]|o[1-9])(-|$|\.)/i.test(bareModel);
   const body: Record<string, unknown> = {
     model,
     messages: [{ role: 'user', content: 'ping' }],

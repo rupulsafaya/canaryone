@@ -56,6 +56,7 @@ export function Confirm() {
   const pickedRouteIds = useStore((s) => s.pickedRouteIds);
   const pickedRoutes = useStore((s) => s.pickedRoutes);
   const preflight = useStore((s) => s.preflight);
+  const targetGitDirty = useStore((s) => s.targetGitDirty);
   const runPreflight = useStore((s) => s.runPreflight);
   const toggleRoutePick = useStore((s) => s.toggleRoutePick);
   const pinTemperature = useStore((s) => s.pinTemperature);
@@ -328,6 +329,23 @@ export function Confirm() {
           {lanes.length === 0 && <Box><Text color="#ef4444" dimColor>{'  '}no lanes yet — press <Text color="cyan">m</Text> to open route picker</Text></Box>}
         </Box>
       </Section>
+
+      {targetGitDirty && targetGitDirty.dirty && (
+        <Box marginBottom={1} flexDirection="column">
+          <Box>
+            <Text color="#eab308" bold>⚠ Uncommitted changes in target repo — the run will use the last committed version, not these edits.</Text>
+          </Box>
+          <Box paddingLeft={2} flexDirection="column">
+            {targetGitDirty.files.slice(0, 5).map((f) => (
+              <Text key={f} color="gray" dimColor>· {f}</Text>
+            ))}
+            {targetGitDirty.files.length > 5 && (
+              <Text color="gray" dimColor>· + {targetGitDirty.files.length - 5} more</Text>
+            )}
+          </Box>
+          <Text color="gray" dimColor>  canaryone spawns `git worktree add HEAD`; commit before running to include these changes.</Text>
+        </Box>
+      )}
 
       <Section title={
         preflight.status === 'running' ? 'Preflight (probing…)'
