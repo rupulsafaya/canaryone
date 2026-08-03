@@ -84,6 +84,12 @@ code { background: var(--panel); padding: 1px 4px; border-radius: 3px; }
 .tab   { font-variant-numeric: tabular-nums; }
 
 /* Hero */
+/* The brand lockup replaces the word mark that used to be set in type here.
+   Centring the row rather than baseline-aligning it keeps the mark level with
+   the heading, since a block SVG's baseline is its own bottom edge. */
+.hero-title { display: flex; align-items: center; gap: 12px; }
+.hero-title .brand-mark { flex-shrink: 0; }
+.hero-title .sep { color: var(--muted); font-weight: 400; }
 .hero-sub { color: var(--muted); font-size: 14px; margin-top: 6px; margin-bottom: 14px; }
 .metric-primer {
   background: #f8fafc;
