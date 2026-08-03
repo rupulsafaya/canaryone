@@ -2,7 +2,7 @@
 
 **Benchmark your AI agent across every provider it could run on — using your own tests.**
 
-`canaryone` reroutes the LLM calls your test suite already makes through 3 routers (OpenRouter, Vercel AI Gateway, AWS Bedrock) and 14 direct providers (OpenAI, Anthropic, DeepSeek, xAI, Google Gemini, Z.ai, Moonshot, Nebius, Fireworks, Together, Baseten, Groq, Cerebras, and any others you configure), then reports **cost-per-passing-outcome + judged trajectory quality** side by side. No cloud, no account, no data leaves your machine.
+`canaryone` reroutes the LLM calls your test suite already makes through 3 routers (OpenRouter, Vercel AI Gateway, AWS Bedrock) and 14 direct providers (OpenAI, Anthropic, DeepSeek, xAI, Google Gemini, Z.ai, Moonshot, Nebius, Fireworks, Together, Baseten, Groq, Cerebras, and any others you configure), then reports **cost-per-passing-outcome + judged trajectory quality** side by side. Runs on your machine, against your own tests.
 
 ```
 Model          Provider              Router      pass    $/pass    judge   weighted $/pass
