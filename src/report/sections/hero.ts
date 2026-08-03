@@ -65,7 +65,7 @@ export function renderHero(data: RunData): string {
       <span class="muted" style="font-weight: 400; font-size: 12.5px;">— read this first</span>
     </summary>
     <div style="padding: 0 18px 14px 18px;">
-      <p style="margin: 0 0 10px 0;"><strong>canaryone</strong> is a local CLI. Point it at your codebase, and it runs your own tests against multiple LLM providers to compare cost and quality on <em>real work</em> — the LLM your test would normally call gets swapped for whichever provider we're benchmarking. Nothing leaves your machine.</p>
+      <p style="margin: 0 0 10px 0;"><strong>canaryone</strong> is a local CLI. Point it at your codebase, and it runs your own tests against multiple LLM providers to compare cost and quality on <em>real work</em> — the LLM your test would normally call gets swapped for whichever provider we're benchmarking. It runs on your machine, against your own tests.</p>
       <p style="margin: 0 0 10px 0;">For this run, canaryone:</p>
       <ol style="margin: 0 0 12px 20px; padding: 0; line-height: 1.7;">
         <li>Read your target repo at <code>${targetDir}</code>.</li>
