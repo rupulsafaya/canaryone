@@ -43,6 +43,17 @@ async function main() {
     'fallback to name field',
   );
 
+  // Together AI: top-level array (no `data` wrapper).
+  const togetherShape = [
+    { id: 'Qwen/Qwen3.5-9B', object: 'model' },
+    { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', object: 'model' },
+  ];
+  assert(
+    JSON.stringify(cat.extractSlugs(togetherShape)) ===
+      JSON.stringify(['Qwen/Qwen3.5-9B', 'meta-llama/Llama-3.3-70B-Instruct-Turbo']),
+    'Together AI top-level-array shape',
+  );
+
   assert(cat.extractSlugs({}).length === 0, 'empty response → empty list');
   assert(cat.extractSlugs(null).length === 0, 'null → empty list');
   assert(cat.extractSlugs({ data: 'not-an-array' }).length === 0, 'non-array data → empty');

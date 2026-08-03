@@ -119,11 +119,98 @@ export async function fetchModels(providerSlug: string, token: string | null): P
     throw new Error(`HTTP ${res.status} for ${providerSlug} catalog: ${body.slice(0, 200)}`);
   }
   const body = await res.json();
-  const rawSlugs = extractSlugs(body);
+  let rawSlugs = extractSlugs(body);
   if (rawSlugs.length === 0) {
     throw new Error(`no model slugs found in ${providerSlug} catalog response`);
   }
+  // Together AI: /v1/models entries for user-owned fine-tunes are registry names
+  // that are NOT directly callable (they error with `model_not_available`). Only
+  // DMI endpoint strings (e.g. `<project-slug>/<endpoint-name>`) are callable.
+  // Filter out the non-callable entries and merge in the user's DMI endpoints.
+  if (providerSlug === 'direct:together' && token) {
+    rawSlugs = await augmentTogetherWithDmi(rawSlugs, body, token);
+  }
   return { rawSlugs };
+}
+
+/**
+ * Together AI catalog augmentation:
+ *  - Drop `running: false` user-owned fine-tune registry names (non-serverless,
+ *    HTTP 400 on inference).
+ *  - Fetch the caller's DMI (dedicated model inference) endpoints and prepend
+ *    each `<project-slug>/<endpoint-name>` string — those ARE callable via
+ *    /v1/chat/completions on api.together.xyz.
+ * Failures fall back to the raw slug list so the catalog never dies just
+ * because a user has no DMI endpoints.
+ */
+async function augmentTogetherWithDmi(
+  rawSlugs: string[],
+  body: unknown,
+  token: string,
+): Promise<string[]> {
+  // Discover user's org + project via /v1/whoami. Use org name to identify
+  // user-owned entries in /v1/models (they carry `organization: <org_name>`)
+  // and drop them — the registry name is NOT callable; the DMI endpoint is.
+  let userOrgName: string | null = null;
+  let projectId: string | null = null;
+  try {
+    const whoRes = await fetch('https://api.together.ai/v1/whoami', {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (whoRes.ok) {
+      const who = (await whoRes.json()) as Record<string, unknown>;
+      if (typeof who.organization_name === 'string') userOrgName = who.organization_name;
+      if (typeof who.project_id === 'string') projectId = who.project_id;
+    }
+  } catch {
+    // Fall through — we'll return rawSlugs unchanged.
+  }
+
+  // Drop user-owned registry entries (non-callable at /v1/chat/completions).
+  let callable = rawSlugs;
+  if (userOrgName && Array.isArray(body)) {
+    const userOwned = new Set<string>();
+    for (const entry of body) {
+      if (entry && typeof entry === 'object') {
+        const rec = entry as Record<string, unknown>;
+        if (typeof rec.id === 'string' && rec.organization === userOrgName) {
+          userOwned.add(rec.id);
+        }
+      }
+    }
+    if (userOwned.size > 0) {
+      callable = rawSlugs.filter((s) => !userOwned.has(s));
+    }
+  }
+
+  if (!projectId) return callable;
+
+  // Fetch DMI endpoint strings — these ARE callable via /v1/chat/completions.
+  try {
+    const epRes = await fetch(
+      `https://api.together.ai/v2/projects/${encodeURIComponent(projectId)}/endpoints`,
+      {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    if (!epRes.ok) return callable;
+    const epBody = (await epRes.json()) as Record<string, unknown>;
+    const data = Array.isArray(epBody.data) ? epBody.data : [];
+    const endpointNames: string[] = [];
+    for (const ep of data) {
+      if (ep && typeof ep === 'object') {
+        const rec = ep as Record<string, unknown>;
+        if (typeof rec.name === 'string' && rec.name.length > 0) {
+          endpointNames.push(rec.name);
+        }
+      }
+    }
+    return [...endpointNames, ...callable];
+  } catch {
+    return callable;
+  }
 }
 
 // ---------- Canonicalize (Haiku one-shot) ----------
@@ -354,6 +441,7 @@ export function extractSlugs(body: unknown): string[] {
   if (!body || typeof body !== 'object') return [];
   const b = body as Record<string, unknown>;
   const candidates: unknown[] = [
+    body,                                                    // Together AI returns a top-level array
     b.data,
     b.models,
     b.modelSummaries,                                        // AWS Bedrock ListFoundationModels

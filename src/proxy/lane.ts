@@ -287,6 +287,17 @@ async function handleChatCompletions(
   // Try parsing OR body for usage; even on !ok, keep original body text.
   let orBody: Record<string, any> | null = null;
   try { orBody = JSON.parse(orBodyText); } catch { orBody = null; }
+
+  // Provider quirk fix: some serverless deployments (observed on Together's
+  // Qwen3 family) don't extract Qwen's native <tool_call>...</tool_call>
+  // XML into the OpenAI-compat `tool_calls` array on multi-turn calls —
+  // the raw XML lands in `message.reasoning_content` instead. Detect and
+  // repair; if we rewrite the body, propagate the fixed JSON to the SDK
+  // client too so the agent loop can see the tool calls.
+  if (orBody && repairQwenXmlToolCalls(orBody)) {
+    orBodyText = JSON.stringify(orBody);
+  }
+
   const usage = orBody?.usage ?? null;
   const inputTokens = Number(usage?.prompt_tokens ?? 0) || 0;
   const outputTokens = Number(usage?.completion_tokens ?? 0) || 0;
@@ -370,6 +381,77 @@ function classifyOrFailure(status: number): string {
   if (status === 400) return 'bad_request';
   if (status >= 500) return 'destination_unavailable';
   return `http_${status}`;
+}
+
+// ---------- Qwen XML tool-call repair ----------
+
+// Match one `<tool_call>...</tool_call>` block with `<function=NAME>` + zero
+// or more `<parameter=KEY>VALUE</parameter>` children. Multiline; VALUE keeps
+// its leading/trailing whitespace so we can trim per-parameter.
+const QWEN_TOOL_CALL_RE = /<tool_call>\s*<function=([\w.-]+)>([\s\S]*?)<\/function>\s*<\/tool_call>/g;
+const QWEN_PARAM_RE = /<parameter=([\w.-]+)>([\s\S]*?)<\/parameter>/g;
+
+/**
+ * Detect and repair Qwen-native `<tool_call>` XML that leaked into a chat
+ * completion response's `message.reasoning_content` (or `reasoning`). When a
+ * choice has empty `tool_calls` but its reasoning contains parseable XML,
+ * synthesize the OpenAI-compat `tool_calls` array in place, flip
+ * `finish_reason` to `tool_calls`, and strip the parsed XML out of the
+ * reasoning text.
+ *
+ * Returns true iff the body was mutated. The caller re-serializes.
+ */
+export function repairQwenXmlToolCalls(body: any): boolean {
+  if (!body || !Array.isArray(body.choices)) return false;
+  let mutated = false;
+  for (let i = 0; i < body.choices.length; i++) {
+    const choice = body.choices[i];
+    if (!choice || typeof choice !== 'object') continue;
+    const msg = choice.message;
+    if (!msg || typeof msg !== 'object') continue;
+    const existing = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+    if (existing.length > 0) continue; // already has parsed tool calls; leave alone
+    const reasoningField = typeof msg.reasoning_content === 'string' ? 'reasoning_content'
+      : typeof msg.reasoning === 'string' ? 'reasoning'
+      : null;
+    if (!reasoningField) continue;
+    const src: string = msg[reasoningField];
+    if (!src.includes('<tool_call>') && !src.includes('<function=')) continue;
+
+    const parsed: any[] = [];
+    let m: RegExpExecArray | null;
+    QWEN_TOOL_CALL_RE.lastIndex = 0;
+    while ((m = QWEN_TOOL_CALL_RE.exec(src)) !== null) {
+      const fnName = m[1];
+      const inner = m[2];
+      const args: Record<string, string> = {};
+      let pm: RegExpExecArray | null;
+      QWEN_PARAM_RE.lastIndex = 0;
+      while ((pm = QWEN_PARAM_RE.exec(inner)) !== null) {
+        args[pm[1]] = pm[2].trim();
+      }
+      parsed.push({
+        id: `call_qwen_xml_${i}_${parsed.length}_${Date.now().toString(36)}`,
+        type: 'function',
+        function: {
+          name: fnName,
+          arguments: JSON.stringify(args),
+        },
+      });
+    }
+    if (parsed.length === 0) continue;
+    msg.tool_calls = parsed;
+    // Strip the XML we consumed from the reasoning field, keep any surrounding prose.
+    msg[reasoningField] = src.replace(QWEN_TOOL_CALL_RE, '').trim();
+    // If reasoning is now empty, drop it entirely for cleaner downstream output.
+    if (!msg[reasoningField]) delete msg[reasoningField];
+    // Standard chat-completions finish_reason for a tool-calling response.
+    if (choice.finish_reason === 'stop' || !choice.finish_reason) {
+      choice.finish_reason = 'tool_calls';
+    }
+    mutated = true;
+  }
+  return mutated;
 }
 
 // ---------- convenience: port picking (used only for unit tests / diagnostics) ----------

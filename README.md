@@ -21,6 +21,7 @@ Kimi K3        nebius                Vercel       6/12   $0.0472   69 ⚠    $0.
 - Catch providers that pass exit-code checks but drift into narrated bullshit under load.
 - Compare underlying providers within a gateway (OpenRouter routing to Baseten vs OpenRouter routing to Fireworks) as separate lanes.
 - Try a candidate model on your actual tasks before switching production.
+- **Evaluate your own fine-tunes against real agent workloads before deploying them.** A LoRA that looks fine on chat "hello" checks can silently regress tool-calling — canaryone runs it against your actual tests and shows the delta vs the base model side by side. See [Fine-tuned models on Together](#fine-tuned-models-on-together).
 
 ## Install
 
@@ -165,6 +166,23 @@ Direct providers (OpenAI-compat endpoints, one lane per provider):
 Each direct provider ships with its native model catalog. OpenRouter and Vercel additionally expose their underlying host list (Baseten, Fireworks, Morph, Nebius, etc.) as separate variant lanes so you can compare *"the same model on the same underlying host, through two different gateways."*
 
 **Auth notes.** All direct providers accept `Authorization: Bearer <key>` on `/chat/completions`. Anthropic's `/v1/models` catalog probe requires `x-api-key` + `anthropic-version` instead — canaryone handles that automatically via the `catalogAuthKind` field on the registry entry. See [`docs/compat-matrix-31july.md`](./docs/compat-matrix-31july.md) for the live compat verdicts.
+
+### Fine-tuned models on Together
+
+If you have a fine-tune deployed as a **Dedicated Model Inference (DMI)** endpoint on Together, canaryone discovers it automatically alongside the catalog. Set `TOGETHER_API_KEY` on the API keys screen, and any DMI endpoint on your account (`your-project-slug/endpoint-name`) shows up in Pick Routes next to the base models.
+
+That means you can put a lane row like
+
+```
+your-org/my-lora-endpoint   direct:together      LoRA fine-tune (DMI, per-minute billed)
+```
+
+side-by-side with the base model it was tuned from, then run your real T01 tasks against both. Common outcome: the fine-tune passes a chat smoke test but regresses on agent tool-calling — the kind of failure a `curl … chat/completions` check misses entirely. canaryone surfaces it as a pass-rate delta.
+
+Two Together-specific things worth knowing:
+
+- **DMI is per-minute billed** whether or not you're serving traffic. Scale to zero (`tg beta endpoints update <dep-id> --min-replicas 0 --max-replicas 0`) or delete the endpoint when you're done. canaryone doesn't manage endpoint lifecycle for you.
+- **Qwen3-family models on Together** occasionally leak their native `<tool_call>` XML syntax into `reasoning_content` on multi-turn calls instead of the OpenAI-compat `tool_calls` array. canaryone's proxy repairs this transparently so the agent loop sees standard tool calls — no config needed. See [`src/proxy/lane.ts::repairQwenXmlToolCalls`](./src/proxy/lane.ts).
 
 ## What's on your machine
 
