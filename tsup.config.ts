@@ -24,6 +24,9 @@ export default defineConfig({
     await cp('src/judge/prompt-haiku-r5-local.md', 'dist/judge/prompt-haiku-r5-local.md');
     await mkdir('dist/report/assets/logos', { recursive: true });
     await cp('src/report/assets/logos', 'dist/report/assets/logos', { recursive: true });
+    // CanaryOne's own marks, read by src/report/brand.ts via import.meta.url.
+    await mkdir('dist/report/assets/brand', { recursive: true });
+    await cp('src/report/assets/brand', 'dist/report/assets/brand', { recursive: true });
     // tsup's non-bundle mode leaves `.ts`/`.tsx` extensions in relative import
     // specifiers. Node ESM won't resolve those against the emitted `.js`
     // files, so rewrite them here.

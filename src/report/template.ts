@@ -7,6 +7,7 @@
 
 import { STYLES } from './styles.js';
 import { SCRIPTS } from './scripts.js';
+import { faviconLinkTag } from './brand.js';
 
 export interface RenderedSections {
   hero: string;
@@ -15,7 +16,7 @@ export interface RenderedSections {
 }
 
 export function shell(runId: string, targetDir: string, sections: RenderedSections): string {
-  const title = escapeHtml(`canaryone · Run report · ${runId.slice(0, 8)}`);
+  const title = escapeHtml(`Canary One · Run report · ${runId.slice(0, 8)}`);
   const generatedAt = new Date().toISOString();
   return `<!doctype html>
 <html lang="en">
@@ -26,6 +27,7 @@ export function shell(runId: string, targetDir: string, sections: RenderedSectio
 <meta name="generator" content="canaryone report generator (phase 1)">
 <meta name="generated-at" content="${generatedAt}">
 <meta name="target-dir" content="${escapeAttr(targetDir)}">
+${faviconLinkTag()}
 <style>${STYLES}</style>
 </head>
 <body>

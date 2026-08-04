@@ -5,6 +5,7 @@
 import type { RunData } from '../data.js';
 import { escapeHtml } from '../template.js';
 import { fmtDollars, fmtDuration } from '../../lib/fmt.js';
+import { lockupInline } from '../brand.js';
 
 export function renderHero(data: RunData): string {
   const { run, meta, sessions } = data;
@@ -42,7 +43,7 @@ export function renderHero(data: RunData): string {
 
   return `
 <section id="hero">
-  <h1>canaryone · Run report</h1>
+  <h1 class="hero-title">${lockupInline(30)}<span class="sep" aria-hidden="true">·</span><span>Run report</span></h1>
   <div class="hero-sub">
     Run <code>${escapeHtml(run.id)}</code>
     · ${escapeHtml(startedAt)}

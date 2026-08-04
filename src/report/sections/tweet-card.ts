@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunData, SessionRow } from '../data.js';
 import { computeLaneRollups, type LaneRollup } from '../data.js';
+import { lockupInline, faviconLinkTag } from '../brand.js';
 
 interface LaneStats {
   laneKey: string;
@@ -149,8 +150,9 @@ export function renderTweetCard(data: RunData): string {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Canary1 · ${escapeHtml(modelDisplay)} · ${provCount} providers</title>
+<title>Canary One · ${escapeHtml(modelDisplay)} · ${provCount} providers</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+${faviconLinkTag()}
 <style>
   :root {
     --bg: #fafaf7;
@@ -181,11 +183,14 @@ export function renderTweetCard(data: RunData): string {
     box-shadow: 0 12px 48px rgba(15,23,42,0.08);
   }
   header { padding-bottom: 28px; border-bottom: 1px solid var(--line); }
-  .header-row { display: flex; justify-content: space-between; align-items: baseline; gap: 40px; margin-bottom: 12px; }
+  /* The brand mark is a block SVG, whose baseline is its bottom edge. Baseline
+     alignment would therefore hang it off the h1's text baseline and leave the
+     descender gap below it, so the row centres instead. */
+  .header-row { display: flex; justify-content: space-between; align-items: center; gap: 40px; margin-bottom: 12px; }
+  .brand-mark { flex-shrink: 0; }
   .header-left { min-width: 0; }
   .header-right { text-align: right; flex-shrink: 0; }
   h1 { margin: 0; font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.03em; }
-  .brand-lg { color: var(--accent); font-size: 44px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
   .subrow { display: flex; justify-content: space-between; align-items: baseline; gap: 40px; }
   .context-title { color: var(--text); font-size: 18px; font-weight: 600; margin-top: 8px; letter-spacing: -0.01em; }
   .context-sub { color: var(--muted); font-size: 16px; font-weight: 400; margin-top: 4px; }
@@ -276,7 +281,7 @@ export function renderTweetCard(data: RunData): string {
   <header>
     <div class="header-row">
       <h1>${escapeHtml(modelDisplay)}</h1>
-      <div class="brand-lg">CanaryOne</div>
+      ${lockupInline(44)}
     </div>
     <div class="subrow">
       <div class="header-left">
